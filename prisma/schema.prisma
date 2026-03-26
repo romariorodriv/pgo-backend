@@ -1,0 +1,129 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Get a free hosted Postgres database in seconds: `npx create-db`
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum MatchType{
+  FRIENDLY
+  RANKED
+  TOURNAMENT
+}
+
+enum MatchStatus{
+  DRAFT
+  COMPLETED
+  CANCELED
+}
+
+enum ExperienceLevel {
+  BEGINNER
+  INTERMEDIATE
+  ADVANCED
+  PRO
+}
+
+enum TournamentStatus {
+  DRAFT
+  PUBLISHED
+  COMPLETED
+  CANCELED
+}
+
+model User {
+  id             String   @id @default(uuid())
+  name           String
+  email          String   @unique
+  passwordHash   String   @map("password_hash")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+  profile        Profile?
+  createdMatches Match[]
+  createdTournaments Tournament[]
+  matchParticipations MatchParticipant[]
+
+  @@map("users")
+}
+
+model Profile {
+  id                       String           @id @default(uuid())
+  userId                   String           @unique @map("user_id")
+  user                     User             @relation(fields: [userId], references: [id])
+  photoUrl                 String?          @map("photo_url")
+  experiencePoints         Int              @default(0) @map("experience_points")
+  category                 String?
+  preferredClub            String?          @map("preferred_club")
+  experienceLevel          ExperienceLevel? @map("experience_level")
+  rankingPosition          Int              @default(0) @map("ranking_position")
+  wins                     Int              @default(0)
+  weeklyStreak             Int              @default(0) @map("weekly_streak")
+  friendsCount             Int              @default(0) @map("friends_count")
+  followersCount           Int              @default(0) @map("followers_count")
+  followingCount           Int              @default(0) @map("following_count")
+  socialNotificationsCount Int              @default(0) @map("social_notifications_count")
+  createdAt                DateTime         @default(now()) @map("created_at")
+  updatedAt                DateTime         @updatedAt @map("updated_at")
+
+  @@map("profiles")
+}
+
+model Match {
+  id          String    @id @default(uuid())
+  createdById String
+  createdBy   User      @relation(fields:[createdById],references:[id])
+  clubName    String
+  playedAt    DateTime 
+  matchType   MatchType
+  status      MatchStatus
+  photoUrl    String?   @map("photo_url")
+  description String?
+  winnerTeam  Int?      @map("winner_team")
+  games       Json?
+  xpAwardedAt DateTime? @map("xp_awarded_at")
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  participants MatchParticipant[]
+
+  @@map("matches")
+}
+
+model MatchParticipant {
+  id        String   @id @default(uuid())
+  matchId   String   @map("match_id")
+  userId    String   @map("user_id")
+  slot      Int
+  team      Int
+  createdAt DateTime @default(now()) @map("created_at")
+  match     Match    @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@unique([matchId, slot])
+  @@unique([matchId, userId])
+  @@map("match_participants")
+}
+
+model Tournament {
+  id             String           @id @default(uuid())
+  createdById    String           @map("created_by_id")
+  createdBy      User             @relation(fields: [createdById], references: [id])
+  title          String
+  playerCapacity Int              @map("player_capacity")
+  location       String
+  startsAt       DateTime         @map("starts_at")
+  prize          Int
+  entryFee       Int              @map("entry_fee")
+  category       String
+  status         TournamentStatus @default(PUBLISHED)
+  description    String?
+  createdAt      DateTime         @default(now()) @map("created_at")
+  updatedAt      DateTime         @updatedAt @map("updated_at")
+
+  @@map("tournaments")
+}
