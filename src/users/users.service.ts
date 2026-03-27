@@ -22,34 +22,97 @@ export class UsersService {
     return this.prisma.user.create({ data });
   }
 
-  findCommunity(currentUserId: string, query?: string) {
-    const search = query?.trim();
+  async findSuggestedPlayers(currentUserId: string) {
+    const participations = await this.prisma.matchParticipant.findMany({
+      where: {
+        userId: currentUserId,
+      },
+      include: {
+        match: {
+          include: {
+            participants: {
+              where: {
+                userId: { not: currentUserId },
+              },
+              select: {
+                user: {
+                  select: {
+                    id: true,
+                    name: true,
+                    profile: {
+                      select: {
+                        photoUrl: true,
+                        category: true,
+                        rankingPosition: true,
+                        preferredClub: true,
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+      orderBy: {
+        match: {
+          playedAt: 'desc',
+        },
+      },
+      take: 50,
+    });
+
+    const seen = new Set<string>();
+    const suggestions: Array<{
+      id: string;
+      name: string;
+      profile: {
+        photoUrl: string | null;
+        category: string | null;
+        rankingPosition: number;
+        preferredClub: string | null;
+      } | null;
+    }> = [];
+
+    for (const participation of participations) {
+      for (const teammate of participation.match.participants) {
+        if (seen.has(teammate.user.id)) {
+          continue;
+        }
+
+        seen.add(teammate.user.id);
+        suggestions.push(teammate.user);
+      }
+    }
+
+    return suggestions;
+  }
+
+  searchCommunity(currentUserId: string, query: string) {
+    const search = query.trim();
 
     return this.prisma.user.findMany({
       where: {
         id: { not: currentUserId },
-        ...(search
-          ? {
-              OR: [
-                {
-                  name: {
-                    contains: search,
-                    mode: 'insensitive',
-                  },
-                },
-                {
-                  email: {
-                    contains: search,
-                    mode: 'insensitive',
-                  },
-                },
-              ],
-            }
-          : {}),
+        OR: [
+          {
+            name: {
+              contains: search,
+              mode: 'insensitive',
+            },
+          },
+          {
+            email: {
+              contains: search,
+              mode: 'insensitive',
+            },
+          },
+        ],
       },
       select: {
         id: true,
         name: true,
+        email: true,
         profile: {
           select: {
             photoUrl: true,
@@ -60,7 +123,7 @@ export class UsersService {
         },
       },
       orderBy: [{ name: 'asc' }],
-      take: search ? 20 : 50,
+      take: 20,
     });
   }
 }

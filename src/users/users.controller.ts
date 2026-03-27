@@ -9,11 +9,17 @@ export class UsersController {
   constructor(private readonly usersService: UsersService) {}
 
   @UseGuards(JwtAuthGuard)
+  @Get('suggestions')
+  findSuggestions(@CurrentUser() user: AuthenticatedUser) {
+    return this.usersService.findSuggestedPlayers(user.id);
+  }
+
+  @UseGuards(JwtAuthGuard)
   @Get('community')
-  findCommunity(
+  searchCommunity(
     @CurrentUser() user: AuthenticatedUser,
-    @Query('q') query?: string,
+    @Query('q') query = '',
   ) {
-    return this.usersService.findCommunity(user.id, query);
+    return this.usersService.searchCommunity(user.id, query);
   }
 }
