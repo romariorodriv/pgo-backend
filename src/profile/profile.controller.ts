@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Patch, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, Patch, UseGuards } from '@nestjs/common';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
@@ -13,6 +13,15 @@ export class ProfileController {
   @Get('me')
   getMyProfile(@CurrentUser() user: AuthenticatedUser) {
     return this.profileService.getMyProfile(user.id);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Get(':userId')
+  getProfileById(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('userId') userId: string,
+  ) {
+    return this.profileService.getProfileById(userId, user.id);
   }
 
   @UseGuards(JwtAuthGuard)
