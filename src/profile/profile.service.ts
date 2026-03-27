@@ -48,6 +48,35 @@ export class ProfileService {
     return this.buildProfileResponse(profileUserId, viewerUserId);
   }
 
+  async getMyHistory(userId: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      include: { profile: true },
+    });
+
+    if (!user) {
+      throw new NotFoundException('Usuario no encontrado');
+    }
+
+    const profile = await this.ensureProfile(user);
+    const history = await this.getMatchHistory(user.id);
+    const matchesPlayed = history.length;
+    const wins = profile.wins;
+    const losses = history.filter((item) => item.result === 'LOSS').length;
+    const winRate =
+      matchesPlayed > 0
+        ? Number(((wins / matchesPlayed) * 100).toFixed(2))
+        : 0;
+
+    return {
+      matchesPlayed,
+      wins,
+      losses,
+      winRate,
+      history,
+    };
+  }
+
   async updateMyProfile(userId: string, updateProfileDto: UpdateProfileDto) {
     const { name, ...profileData } = updateProfileDto;
     const trimmedName = name?.trim();
@@ -92,48 +121,13 @@ export class ProfileService {
 
     const profile = await this.ensureProfile(user);
 
-    const [matchesPlayed, recentParticipations] = await Promise.all([
+    const [matchesPlayed, recentHistory] = await Promise.all([
       this.prisma.matchParticipant.count({
         where: {
           userId: user.id,
         },
       }),
-      this.prisma.matchParticipant.findMany({
-        where: {
-          userId: user.id,
-        },
-        include: {
-          match: {
-            include: {
-              participants: {
-                orderBy: { slot: 'asc' },
-                select: {
-                  slot: true,
-                  team: true,
-                  user: {
-                    select: {
-                      id: true,
-                      name: true,
-                      profile: {
-                        select: {
-                          photoUrl: true,
-                          category: true,
-                        },
-                      },
-                    },
-                  },
-                },
-              },
-            },
-          },
-        },
-        orderBy: {
-          match: {
-            playedAt: 'desc',
-          },
-        },
-        take: 10,
-      }),
+      this.getMatchHistory(user.id, 10),
     ]);
 
     const wins = profile.wins;
@@ -161,9 +155,7 @@ export class ProfileService {
       followingCount: profile.followingCount,
       socialNotificationsCount: profile.socialNotificationsCount,
       isCurrentUser: user.id === viewerUserId,
-      matchHistory: recentParticipations.map((participation) =>
-        this.mapMatchHistoryItem(participation),
-      ),
+      matchHistory: recentHistory,
     };
   }
 
@@ -175,6 +167,49 @@ export class ProfileService {
     return this.prisma.profile.create({
       data: { userId: user.id },
     });
+  }
+
+  private async getMatchHistory(userId: string, take?: number) {
+    const participations = await this.prisma.matchParticipant.findMany({
+      where: {
+        userId,
+      },
+      include: {
+        match: {
+          include: {
+            participants: {
+              orderBy: { slot: 'asc' },
+              select: {
+                slot: true,
+                team: true,
+                user: {
+                  select: {
+                    id: true,
+                    name: true,
+                    profile: {
+                      select: {
+                        photoUrl: true,
+                        category: true,
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+      orderBy: {
+        match: {
+          playedAt: 'desc',
+        },
+      },
+      ...(take ? { take } : {}),
+    });
+
+    return participations.map((participation) =>
+      this.mapMatchHistoryItem(participation),
+    );
   }
 
   private mapMatchHistoryItem(participation: MatchParticipantWithMatch) {

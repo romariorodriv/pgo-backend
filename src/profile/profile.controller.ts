@@ -16,6 +16,12 @@ export class ProfileController {
   }
 
   @UseGuards(JwtAuthGuard)
+  @Get('me/history')
+  getMyHistory(@CurrentUser() user: AuthenticatedUser) {
+    return this.profileService.getMyHistory(user.id);
+  }
+
+  @UseGuards(JwtAuthGuard)
   @Get(':userId')
   getProfileById(
     @CurrentUser() user: AuthenticatedUser,
