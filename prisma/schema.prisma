@@ -37,6 +37,17 @@ enum TournamentStatus {
   CANCELED
 }
 
+enum TournamentRegistrationMode {
+  SOLO
+  WITH_PARTNER
+}
+
+enum TournamentRegistrationStatus {
+  PENDING
+  CONFIRMED
+  CANCELED
+}
+
 model User {
   id             String   @id @default(uuid())
   name           String
@@ -48,6 +59,8 @@ model User {
   createdMatches Match[]
   createdTournaments Tournament[]
   matchParticipations MatchParticipant[]
+  tournamentRegistrations TournamentRegistration[] @relation("TournamentRegistrant")
+  partneredTournamentRegistrations TournamentRegistration[] @relation("TournamentPartner")
 
   @@map("users")
 }
@@ -131,6 +144,27 @@ model Tournament {
   description    String?
   createdAt      DateTime         @default(now()) @map("created_at")
   updatedAt      DateTime         @updatedAt @map("updated_at")
+  registrations  TournamentRegistration[]
 
   @@map("tournaments")
+}
+
+model TournamentRegistration {
+  id             String                       @id @default(uuid())
+  tournamentId    String                      @map("tournament_id")
+  userId          String                      @map("user_id")
+  partnerUserId   String?                     @map("partner_user_id")
+  mode            TournamentRegistrationMode
+  status          TournamentRegistrationStatus @default(PENDING)
+  preferredSide   String?                     @map("preferred_side")
+  availability    String?
+  createdAt       DateTime                    @default(now()) @map("created_at")
+  updatedAt       DateTime                    @updatedAt @map("updated_at")
+  tournament      Tournament                  @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  user            User                        @relation("TournamentRegistrant", fields: [userId], references: [id], onDelete: Restrict)
+  partnerUser     User?                       @relation("TournamentPartner", fields: [partnerUserId], references: [id], onDelete: Restrict)
+
+  @@unique([tournamentId, userId])
+  @@unique([tournamentId, partnerUserId])
+  @@map("tournament_registrations")
 }
