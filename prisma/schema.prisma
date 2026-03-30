@@ -114,13 +114,20 @@ model Tournament {
   createdById    String           @map("created_by_id")
   createdBy      User             @relation(fields: [createdById], references: [id])
   title          String
+  tournamentType String           @map("tournament_type")
   playerCapacity Int              @map("player_capacity")
+  modality       String
+  format         String
   location       String
+  address        String?
+  city           String
+  district       String
   startsAt       DateTime         @map("starts_at")
-  prize          Int
+  prize          String
   entryFee       Int              @map("entry_fee")
   category       String
   status         TournamentStatus @default(PUBLISHED)
+  photoUrl       String?          @map("photo_url")
   description    String?
   createdAt      DateTime         @default(now()) @map("created_at")
   updatedAt      DateTime         @updatedAt @map("updated_at")

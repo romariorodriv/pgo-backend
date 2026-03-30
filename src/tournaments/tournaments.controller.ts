@@ -18,13 +18,21 @@ export class TournamentsController {
     return this.tournamentsService.create(
       user.id,
       body.title,
+      body.tournamentType,
       body.playerCapacity,
+      body.modality,
+      body.format,
       body.location,
+      body.address,
+      body.city,
+      body.district,
       new Date(body.startsAt),
       body.prize,
       body.entryFee,
       body.category,
       body.description,
+      body.photoUrl,
+      body.status,
     );
   }
 
