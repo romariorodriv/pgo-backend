@@ -81,6 +81,8 @@ export class TournamentsService {
         registrations: {
           select: {
             id: true,
+            userId: true,
+            partnerUserId: true,
           },
         },
       },

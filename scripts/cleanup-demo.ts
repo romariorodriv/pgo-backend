@@ -92,6 +92,32 @@ async function main() {
   });
 
   if (demoUserIds.length > 0) {
+    await prisma.tournamentRegistration.deleteMany({
+      where: {
+        OR: [
+          {
+            userId: {
+              in: demoUserIds,
+            },
+          },
+          {
+            partnerUserId: {
+              in: demoUserIds,
+            },
+          },
+          {
+            tournament: {
+              title: {
+                startsWith: DEMO_TOURNAMENT_PREFIX,
+              },
+            },
+          },
+        ],
+      },
+    });
+  }
+
+  if (demoUserIds.length > 0) {
     await prisma.profile.deleteMany({
       where: {
         userId: {
