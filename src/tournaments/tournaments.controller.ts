@@ -1,10 +1,11 @@
-import { Body, Controller, Get, Param, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, Patch, Post, UseGuards } from '@nestjs/common';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { CreateTournamentDto } from './dto/create-tournament.dto';
 import { RegisterTournamentPartnerDto } from './dto/register-tournament-partner.dto';
 import { RegisterTournamentSoloDto } from './dto/register-tournament-solo.dto';
+import { UpdateTournamentDto } from './dto/update-tournament.dto';
 import { TournamentsService } from './tournaments.service';
 
 @Controller('tournaments')
@@ -46,6 +47,16 @@ export class TournamentsController {
   @Get(':id')
   findOne(@Param('id') id: string) {
     return this.tournamentsService.findOne(id);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Patch(':id')
+  update(
+    @Param('id') id: string,
+    @Body() body: UpdateTournamentDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.tournamentsService.update(id, user.id, body);
   }
 
   @UseGuards(JwtAuthGuard)

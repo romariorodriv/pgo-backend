@@ -73,6 +73,8 @@ model Profile {
   experiencePoints         Int              @default(0) @map("experience_points")
   category                 String?
   preferredClub            String?          @map("preferred_club")
+  preferredSide            String?          @map("preferred_side")
+  racketModel              String?          @map("racket_model")
   experienceLevel          ExperienceLevel? @map("experience_level")
   rankingPosition          Int              @default(0) @map("ranking_position")
   wins                     Int              @default(0)

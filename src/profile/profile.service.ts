@@ -144,6 +144,8 @@ export class ProfileService {
       experiencePoints: profile.experiencePoints,
       category: profile.category,
       preferredClub: profile.preferredClub,
+      preferredSide: profile.preferredSide,
+      racketModel: profile.racketModel,
       experienceLevel: profile.experienceLevel,
       rankingPosition: profile.rankingPosition,
       matchesPlayed,

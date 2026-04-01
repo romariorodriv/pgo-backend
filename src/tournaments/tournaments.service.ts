@@ -10,6 +10,7 @@ import {
   TournamentRegistrationStatus,
   TournamentStatus,
 } from '@prisma/client';
+import { UpdateTournamentDto } from './dto/update-tournament.dto';
 
 @Injectable()
 export class TournamentsService {
@@ -145,6 +146,60 @@ export class TournamentsService {
     }
 
     return tournament;
+  }
+
+  async update(
+    tournamentId: string,
+    userId: string,
+    body: UpdateTournamentDto,
+  ) {
+    const tournament = await this.prisma.tournament.findUnique({
+      where: { id: tournamentId },
+      select: {
+        id: true,
+        createdById: true,
+      },
+    });
+
+    if (!tournament) {
+      throw new NotFoundException('Torneo no encontrado');
+    }
+
+    if (tournament.createdById != userId) {
+      throw new BadRequestException(
+        'Solo el creador puede editar este torneo',
+      );
+    }
+
+    await this.prisma.tournament.update({
+      where: { id: tournamentId },
+      data: {
+        ...(body.title != null ? { title: body.title } : {}),
+        ...(body.tournamentType != null
+          ? { tournamentType: body.tournamentType }
+          : {}),
+        ...(body.playerCapacity != null
+          ? { playerCapacity: body.playerCapacity }
+          : {}),
+        ...(body.modality != null ? { modality: body.modality } : {}),
+        ...(body.format != null ? { format: body.format } : {}),
+        ...(body.location != null ? { location: body.location } : {}),
+        ...(body.address !== undefined ? { address: body.address } : {}),
+        ...(body.city != null ? { city: body.city } : {}),
+        ...(body.district != null ? { district: body.district } : {}),
+        ...(body.startsAt != null ? { startsAt: new Date(body.startsAt) } : {}),
+        ...(body.prize != null ? { prize: body.prize } : {}),
+        ...(body.entryFee != null ? { entryFee: body.entryFee } : {}),
+        ...(body.category != null ? { category: body.category } : {}),
+        ...(body.description !== undefined
+          ? { description: body.description }
+          : {}),
+        ...(body.photoUrl !== undefined ? { photoUrl: body.photoUrl } : {}),
+        ...(body.status != null ? { status: body.status } : {}),
+      },
+    });
+
+    return this.findOne(tournamentId);
   }
 
   async registerSolo(

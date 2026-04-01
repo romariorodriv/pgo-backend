@@ -27,6 +27,14 @@ export class UpdateProfileDto {
   preferredClub?: string;
 
   @IsOptional()
+  @IsString()
+  preferredSide?: string;
+
+  @IsOptional()
+  @IsString()
+  racketModel?: string;
+
+  @IsOptional()
   @IsEnum(ExperienceLevel)
   experienceLevel?: ExperienceLevel;
 }
