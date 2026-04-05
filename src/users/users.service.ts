@@ -12,6 +12,12 @@ export class UsersService {
     });
   }
 
+  findByGoogleId(googleId: string): Promise<User | null> {
+    return this.prisma.user.findFirst({
+      where: { googleId } as Prisma.UserWhereInput,
+    });
+  }
+
   findById(id: string): Promise<User | null> {
     return this.prisma.user.findUnique({
       where: { id },
@@ -20,6 +26,13 @@ export class UsersService {
 
   create(data: Prisma.UserCreateInput): Promise<User> {
     return this.prisma.user.create({ data });
+  }
+
+  updateById(id: string, data: Prisma.UserUpdateInput): Promise<User> {
+    return this.prisma.user.update({
+      where: { id },
+      data,
+    });
   }
 
   async findSuggestedPlayers(currentUserId: string) {
@@ -95,6 +108,9 @@ export class UsersService {
       where: {
         id: { not: currentUserId },
         OR: [
+          {
+            id: search,
+          },
           {
             name: {
               contains: search,

@@ -48,10 +48,17 @@ enum TournamentRegistrationStatus {
   CANCELED
 }
 
+enum TournamentMatchStatus {
+  PENDING
+  LIVE
+  FINISHED
+}
+
 model User {
   id             String   @id @default(uuid())
   name           String
   email          String   @unique
+  googleId       String?  @unique @map("google_id")
   passwordHash   String   @map("password_hash")
   createdAt      DateTime @default(now()) @map("created_at")
   updatedAt      DateTime @updatedAt @map("updated_at")
@@ -148,6 +155,7 @@ model Tournament {
   createdAt      DateTime         @default(now()) @map("created_at")
   updatedAt      DateTime         @updatedAt @map("updated_at")
   registrations  TournamentRegistration[]
+  matches        TournamentMatch[]
 
   @@map("tournaments")
 }
@@ -170,4 +178,24 @@ model TournamentRegistration {
   @@unique([tournamentId, userId])
   @@unique([tournamentId, partnerUserId])
   @@map("tournament_registrations")
+}
+
+model TournamentMatch {
+  id              String              @id @default(uuid())
+  tournamentId     String             @map("tournament_id")
+  stage            String
+  matchNumber      Int                @map("match_number")
+  courtLabel       String             @map("court_label")
+  scheduledAt      DateTime           @map("scheduled_at")
+  teamOneLabel     String             @map("team_one_label")
+  teamTwoLabel     String             @map("team_two_label")
+  winnerLabel      String?            @map("winner_label")
+  status           TournamentMatchStatus @default(PENDING)
+  score            String?
+  createdAt        DateTime           @default(now()) @map("created_at")
+  updatedAt        DateTime           @updatedAt @map("updated_at")
+  tournament       Tournament         @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+
+  @@unique([tournamentId, stage, matchNumber])
+  @@map("tournament_matches")
 }

@@ -74,23 +74,6 @@ async function main() {
     });
   }
 
-  await prisma.tournament.deleteMany({
-    where: {
-      OR: [
-        {
-          title: {
-            startsWith: DEMO_TOURNAMENT_PREFIX,
-          },
-        },
-        {
-          createdById: {
-            in: demoUserIds,
-          },
-        },
-      ],
-    },
-  });
-
   if (demoUserIds.length > 0) {
     await prisma.tournamentRegistration.deleteMany({
       where: {
@@ -116,6 +99,23 @@ async function main() {
       },
     });
   }
+
+  await prisma.tournament.deleteMany({
+    where: {
+      OR: [
+        {
+          title: {
+            startsWith: DEMO_TOURNAMENT_PREFIX,
+          },
+        },
+        {
+          createdById: {
+            in: demoUserIds,
+          },
+        },
+      ],
+    },
+  });
 
   if (demoUserIds.length > 0) {
     await prisma.profile.deleteMany({

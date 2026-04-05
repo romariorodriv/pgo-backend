@@ -5,6 +5,7 @@ import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.in
 import { CreateTournamentDto } from './dto/create-tournament.dto';
 import { RegisterTournamentPartnerDto } from './dto/register-tournament-partner.dto';
 import { RegisterTournamentSoloDto } from './dto/register-tournament-solo.dto';
+import { UpdateTournamentMatchDto } from './dto/update-tournament-match.dto';
 import { UpdateTournamentDto } from './dto/update-tournament.dto';
 import { TournamentsService } from './tournaments.service';
 
@@ -66,6 +67,59 @@ export class TournamentsController {
     @CurrentUser() user: AuthenticatedUser,
   ) {
     return this.tournamentsService.getAdminBracket(id, user.id);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post(':id/generate-bracket')
+  generateBracket(
+    @Param('id') id: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.tournamentsService.generateBracket(id, user.id);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Patch(':id/admin-matches/:matchId/start')
+  startAdminMatch(
+    @Param('id') id: string,
+    @Param('matchId') matchId: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.tournamentsService.startAdminMatch(id, matchId, user.id);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Patch(':id/admin-matches/:matchId/finish')
+  finishAdminMatch(
+    @Param('id') id: string,
+    @Param('matchId') matchId: string,
+    @Body() body: UpdateTournamentMatchDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.tournamentsService.finishAdminMatch(
+      id,
+      matchId,
+      user.id,
+      body.winnerLabel,
+      body.score,
+    );
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Patch(':id/admin-matches/:matchId/correct-result')
+  correctAdminMatchResult(
+    @Param('id') id: string,
+    @Param('matchId') matchId: string,
+    @Body() body: UpdateTournamentMatchDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.tournamentsService.correctAdminMatchResult(
+      id,
+      matchId,
+      user.id,
+      body.winnerLabel,
+      body.score,
+    );
   }
 
   @UseGuards(JwtAuthGuard)
