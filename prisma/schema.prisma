@@ -142,6 +142,7 @@ model Tournament {
   entryFee       Int              @map("entry_fee")
   category       String
   status         TournamentStatus @default(PUBLISHED)
+  registrationsOpen Boolean       @default(true) @map("registrations_open")
   photoUrl       String?          @map("photo_url")
   description    String?
   createdAt      DateTime         @default(now()) @map("created_at")

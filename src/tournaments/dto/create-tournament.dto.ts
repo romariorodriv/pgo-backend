@@ -1,4 +1,5 @@
 import {
+  IsBoolean,
   IsEnum,
   IsDateString,
   IsInt,
@@ -62,4 +63,8 @@ export class CreateTournamentDto {
   @IsOptional()
   @IsEnum(TournamentStatus)
   status?: TournamentStatus;
+
+  @IsOptional()
+  @IsBoolean()
+  registrationsOpen?: boolean;
 }

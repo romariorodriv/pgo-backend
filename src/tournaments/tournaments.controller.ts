@@ -36,6 +36,7 @@ export class TournamentsController {
       body.description,
       body.photoUrl,
       body.status,
+      body.registrationsOpen,
     );
   }
 
@@ -47,6 +48,24 @@ export class TournamentsController {
   @Get(':id')
   findOne(@Param('id') id: string) {
     return this.tournamentsService.findOne(id);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Get(':id/admin-matches')
+  getAdminMatches(
+    @Param('id') id: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.tournamentsService.getAdminMatches(id, user.id);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Get(':id/admin-bracket')
+  getAdminBracket(
+    @Param('id') id: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.tournamentsService.getAdminBracket(id, user.id);
   }
 
   @UseGuards(JwtAuthGuard)
