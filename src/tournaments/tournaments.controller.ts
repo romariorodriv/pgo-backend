@@ -79,6 +79,15 @@ export class TournamentsController {
   }
 
   @UseGuards(JwtAuthGuard)
+  @Post(':id/close-and-generate')
+  closeAndGenerateBracket(
+    @Param('id') id: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.tournamentsService.closeAndGenerateBracket(id, user.id);
+  }
+
+  @UseGuards(JwtAuthGuard)
   @Patch(':id/admin-matches/:matchId/start')
   startAdminMatch(
     @Param('id') id: string,

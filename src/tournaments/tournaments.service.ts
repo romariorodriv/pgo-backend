@@ -218,6 +218,46 @@ export class TournamentsService {
   }
 
   async generateBracket(tournamentId: string, userId: string) {
+    const tournament = await this.ensureTournamentReadyForBracketGeneration(
+      tournamentId,
+      userId,
+    );
+    const bracketMatches = this.buildBracketMatchesFromTournament(tournament);
+
+    await this.prisma.tournamentMatch.createMany({
+      data: bracketMatches,
+    });
+
+    return this.getAdminBracket(tournamentId, userId);
+  }
+
+  async closeAndGenerateBracket(tournamentId: string, userId: string) {
+    const tournament = await this.ensureTournamentReadyForBracketGeneration(
+      tournamentId,
+      userId,
+    );
+    const bracketMatches = this.buildBracketMatchesFromTournament(tournament);
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.tournament.update({
+        where: { id: tournamentId },
+        data: {
+          registrationsOpen: false,
+        },
+      });
+
+      await tx.tournamentMatch.createMany({
+        data: bracketMatches,
+      });
+    });
+
+    return this.getAdminBracket(tournamentId, userId);
+  }
+
+  private async ensureTournamentReadyForBracketGeneration(
+    tournamentId: string,
+    userId: string,
+  ) {
     const tournament = await this.prisma.tournament.findUnique({
       where: { id: tournamentId },
       include: {
@@ -270,23 +310,16 @@ export class TournamentsService {
       );
     }
 
-    const bracketMatches = this.buildBracketMatches(
-      tournament.id,
-      tournament.startsAt,
-      pairings,
-    );
-
-    await this.prisma.$transaction(async (tx) => {
-      await tx.tournamentMatch.deleteMany({
-        where: { tournamentId },
-      });
-
-      await tx.tournamentMatch.createMany({
-        data: bracketMatches,
-      });
+    const existingMatches = await this.prisma.tournamentMatch.count({
+      where: { tournamentId },
     });
+    if (existingMatches > 0) {
+      throw new ConflictException(
+        'Este torneo ya tiene cruces generados. No se pueden regenerar desde aqui.',
+      );
+    }
 
-    return this.getAdminBracket(tournamentId, userId);
+    return tournament;
   }
 
   async startAdminMatch(tournamentId: string, matchId: string, userId: string) {
@@ -630,18 +663,21 @@ export class TournamentsService {
   }
 
   private async getPersistedMatches(tournamentId: string) {
-    return this.prisma.tournamentMatch.findMany({
+    const matches = await this.prisma.tournamentMatch.findMany({
       where: {
         tournamentId,
       },
       orderBy: [
         {
-          stage: 'asc',
-        },
-        {
           matchNumber: 'asc',
         },
       ],
+    });
+
+    return matches.sort((left, right) => {
+      const leftStage = STAGE_SEQUENCE.indexOf(left.stage as StageKey);
+      const rightStage = STAGE_SEQUENCE.indexOf(right.stage as StageKey);
+      return leftStage - rightStage || left.matchNumber - right.matchNumber;
     });
   }
 
@@ -737,6 +773,25 @@ export class TournamentsService {
     return matches;
   }
 
+  private buildBracketMatchesFromTournament(tournament: {
+    id: string;
+    startsAt: Date;
+    registrations: Array<{
+      user: { name: string };
+      partnerUser: { name: string } | null;
+    }>;
+  }) {
+    const pairings = tournament.registrations.map((registration) => ({
+      teamLabel: `${registration.user.name} / ${registration.partnerUser!.name}`,
+    }));
+
+    return this.buildBracketMatches(
+      tournament.id,
+      tournament.startsAt,
+      pairings,
+    );
+  }
+
   private ensureValidWinner(
     match: TournamentMatchRecord,
     winnerLabel: string,
@@ -758,9 +813,14 @@ export class TournamentsService {
     const matches = await tx.tournamentMatch.findMany({
       where: { tournamentId },
       orderBy: [
-        { stage: 'asc' },
         { matchNumber: 'asc' },
       ],
+    });
+
+    matches.sort((left, right) => {
+      const leftStage = STAGE_SEQUENCE.indexOf(left.stage as StageKey);
+      const rightStage = STAGE_SEQUENCE.indexOf(right.stage as StageKey);
+      return leftStage - rightStage || left.matchNumber - right.matchNumber;
     });
 
     for (let index = 0; index < STAGE_SEQUENCE.length - 1; index++) {
@@ -775,19 +835,6 @@ export class TournamentsService {
         continue;
       }
 
-      for (const nextMatch of nextStageMatches) {
-        await tx.tournamentMatch.update({
-          where: { id: nextMatch.id },
-          data: {
-            teamOneLabel: 'TBD',
-            teamTwoLabel: 'TBD',
-            status: TournamentMatchStatus.PENDING,
-            score: null,
-            winnerLabel: null,
-          },
-        });
-      }
-
       const winners = currentStageMatches
         .filter(
           (match) =>
@@ -797,23 +844,45 @@ export class TournamentsService {
         )
         .map((match) => match.winnerLabel!.trim());
 
-      for (let winnerIndex = 0; winnerIndex < winners.length; winnerIndex++) {
-        const targetMatchNumber = Math.floor(winnerIndex / 2) + 1;
-        const targetMatch = nextStageMatches.find(
-          (match) => match.matchNumber === targetMatchNumber,
-        );
+      for (const nextMatch of nextStageMatches) {
+        const teamOneWinnerIndex = (nextMatch.matchNumber - 1) * 2;
+        const desiredTeamOne = winners[teamOneWinnerIndex] ?? 'TBD';
+        const desiredTeamTwo = winners[teamOneWinnerIndex + 1] ?? 'TBD';
+        const teamLabelsChanged =
+          nextMatch.teamOneLabel !== desiredTeamOne ||
+          nextMatch.teamTwoLabel !== desiredTeamTwo;
 
-        if (!targetMatch) {
+        if (!teamLabelsChanged) {
           continue;
         }
 
+        const nextMatchNeedsReset =
+          nextMatch.status !== TournamentMatchStatus.PENDING ||
+          nextMatch.score !== null ||
+          nextMatch.winnerLabel !== null;
+
         await tx.tournamentMatch.update({
-          where: { id: targetMatch.id },
-          data:
-            winnerIndex % 2 === 0
-              ? { teamOneLabel: winners[winnerIndex] }
-              : { teamTwoLabel: winners[winnerIndex] },
+          where: { id: nextMatch.id },
+          data: {
+            teamOneLabel: desiredTeamOne,
+            teamTwoLabel: desiredTeamTwo,
+            ...(nextMatchNeedsReset
+                ? {
+                    status: TournamentMatchStatus.PENDING,
+                    score: null,
+                    winnerLabel: null,
+                  }
+                : {}),
+          },
         });
+
+        nextMatch.teamOneLabel = desiredTeamOne;
+        nextMatch.teamTwoLabel = desiredTeamTwo;
+        if (nextMatchNeedsReset) {
+          nextMatch.status = TournamentMatchStatus.PENDING;
+          nextMatch.score = null;
+          nextMatch.winnerLabel = null;
+        }
       }
     }
   }
