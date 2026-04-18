@@ -169,4 +169,34 @@ export class TournamentsController {
       body.partnerUserId,
     );
   }
+
+  @UseGuards(JwtAuthGuard)
+  @Patch(':id/admin-registrations/:registrationId/pair/:partnerRegistrationId')
+  pairAdminRegistrations(
+    @Param('id') id: string,
+    @Param('registrationId') registrationId: string,
+    @Param('partnerRegistrationId') partnerRegistrationId: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.tournamentsService.pairAdminRegistrations(
+      id,
+      registrationId,
+      partnerRegistrationId,
+      user.id,
+    );
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Patch(':id/admin-registrations/:registrationId/remove')
+  removeAdminRegistration(
+    @Param('id') id: string,
+    @Param('registrationId') registrationId: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.tournamentsService.removeAdminRegistration(
+      id,
+      registrationId,
+      user.id,
+    );
+  }
 }

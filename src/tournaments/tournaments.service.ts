@@ -564,6 +564,100 @@ export class TournamentsService {
     });
   }
 
+  async pairAdminRegistrations(
+    tournamentId: string,
+    registrationId: string,
+    partnerRegistrationId: string,
+    adminUserId: string,
+  ) {
+    if (registrationId === partnerRegistrationId) {
+      throw new BadRequestException('Debes seleccionar dos inscripciones distintas');
+    }
+
+    await this.ensureTournamentOwnership(tournamentId, adminUserId);
+    await this.ensureAdminCanManageRegistrations(tournamentId);
+
+    const [registration, partnerRegistration] = await Promise.all([
+      this.prisma.tournamentRegistration.findFirst({
+        where: { id: registrationId, tournamentId },
+      }),
+      this.prisma.tournamentRegistration.findFirst({
+        where: { id: partnerRegistrationId, tournamentId },
+      }),
+    ]);
+
+    if (!registration || !partnerRegistration) {
+      throw new NotFoundException('Inscripcion no encontrada');
+    }
+
+    if (
+      registration.status !== TournamentRegistrationStatus.PENDING ||
+      partnerRegistration.status !== TournamentRegistrationStatus.PENDING ||
+      registration.mode !== TournamentRegistrationMode.SOLO ||
+      partnerRegistration.mode !== TournamentRegistrationMode.SOLO
+    ) {
+      throw new BadRequestException(
+        'Solo puedes emparejar jugadores que esten inscritos sin pareja',
+      );
+    }
+
+    if (registration.userId === partnerRegistration.userId) {
+      throw new BadRequestException('No puedes emparejar un jugador consigo mismo');
+    }
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.tournamentRegistration.update({
+        where: { id: registration.id },
+        data: {
+          partnerUserId: partnerRegistration.userId,
+          mode: TournamentRegistrationMode.WITH_PARTNER,
+          status: TournamentRegistrationStatus.CONFIRMED,
+        },
+      });
+
+      await tx.tournamentRegistration.update({
+        where: { id: partnerRegistration.id },
+        data: {
+          status: TournamentRegistrationStatus.CANCELED,
+        },
+      });
+    });
+
+    return this.findOne(tournamentId);
+  }
+
+  async removeAdminRegistration(
+    tournamentId: string,
+    registrationId: string,
+    adminUserId: string,
+  ) {
+    await this.ensureTournamentOwnership(tournamentId, adminUserId);
+    await this.ensureAdminCanManageRegistrations(tournamentId);
+
+    const registration = await this.prisma.tournamentRegistration.findFirst({
+      where: {
+        id: registrationId,
+        tournamentId,
+        status: {
+          not: TournamentRegistrationStatus.CANCELED,
+        },
+      },
+    });
+
+    if (!registration) {
+      throw new NotFoundException('Inscripcion no encontrada');
+    }
+
+    await this.prisma.tournamentRegistration.update({
+      where: { id: registration.id },
+      data: {
+        status: TournamentRegistrationStatus.CANCELED,
+      },
+    });
+
+    return this.findOne(tournamentId);
+  }
+
   private async ensureTournamentOpen(tournamentId: string) {
     const tournament = await this.prisma.tournament.findUnique({
       where: { id: tournamentId },
@@ -679,6 +773,36 @@ export class TournamentsService {
       const rightStage = STAGE_SEQUENCE.indexOf(right.stage as StageKey);
       return leftStage - rightStage || left.matchNumber - right.matchNumber;
     });
+  }
+
+  private async ensureAdminCanManageRegistrations(tournamentId: string) {
+    const tournament = await this.prisma.tournament.findUnique({
+      where: { id: tournamentId },
+      select: {
+        id: true,
+        registrationsOpen: true,
+        matches: {
+          select: { id: true },
+          take: 1,
+        },
+      },
+    });
+
+    if (!tournament) {
+      throw new NotFoundException('Torneo no encontrado');
+    }
+
+    if (!tournament.registrationsOpen) {
+      throw new BadRequestException(
+        'No puedes modificar inscritos con las inscripciones cerradas',
+      );
+    }
+
+    if (tournament.matches.length > 0) {
+      throw new BadRequestException(
+        'No puedes modificar inscritos despues de generar cruces',
+      );
+    }
   }
 
   private mapAdminTournament(tournament: AdminTournamentSelect) {
