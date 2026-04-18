@@ -19,14 +19,22 @@ import { JwtPayload } from './interfaces/jwt-payload.interface';
 @Injectable()
 export class AuthService {
   private readonly googleClient = new OAuth2Client();
-  private readonly googleClientId: string | undefined;
+  private readonly googleClientIds: string[];
 
   constructor(
     private readonly usersService: UsersService,
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
   ) {
-    this.googleClientId = this.configService.get<string>('GOOGLE_CLIENT_ID');
+    const rawClientIds =
+      this.configService.get<string>('GOOGLE_CLIENT_IDS') ??
+      this.configService.get<string>('GOOGLE_CLIENT_ID') ??
+      '';
+
+    this.googleClientIds = rawClientIds
+      .split(',')
+      .map((id) => id.trim())
+      .filter(Boolean);
   }
 
   async register(registerDto: RegisterDto) {
@@ -96,7 +104,7 @@ export class AuthService {
   }
 
   async googleLogin(googleLoginDto: GoogleLoginDto) {
-    if (!this.googleClientId) {
+    if (this.googleClientIds.length === 0) {
       throw new InternalServerErrorException(
         'Google Sign-In no esta configurado en el backend',
       );
@@ -107,7 +115,7 @@ export class AuthService {
     try {
       const ticket = await this.googleClient.verifyIdToken({
         idToken: googleLoginDto.idToken,
-        audience: this.googleClientId,
+        audience: this.googleClientIds,
       });
 
       payload = ticket.getPayload();

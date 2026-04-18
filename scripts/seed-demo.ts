@@ -792,18 +792,9 @@ async function createDemoRegistrations(
       {
         tournamentId: tournaments.demoTournamentAdmin.id,
         userId: kathId,
-        mode: TournamentRegistrationMode.SOLO,
-        status: TournamentRegistrationStatus.PENDING,
-        preferredSide: 'Drive',
-        availability: 'Noche',
-      },
-      {
-        tournamentId: tournaments.demoTournamentAdmin.id,
-        userId: alessiaId,
-        mode: TournamentRegistrationMode.SOLO,
-        status: TournamentRegistrationStatus.PENDING,
-        preferredSide: 'Reves',
-        availability: 'Dia',
+        partnerUserId: alessiaId,
+        mode: TournamentRegistrationMode.WITH_PARTNER,
+        status: TournamentRegistrationStatus.CONFIRMED,
       },
       {
         tournamentId: tournaments.demoTournamentInscrito.id,
