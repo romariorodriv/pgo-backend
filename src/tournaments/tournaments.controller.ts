@@ -74,6 +74,12 @@ export class TournamentsController {
     return this.tournamentsService.getPublicBracket(id);
   }
 
+  @UseGuards(JwtAuthGuard)
+  @Get('me/alerts')
+  getMyAlerts(@CurrentUser() user: AuthenticatedUser) {
+    return this.tournamentsService.getMyAlerts(user.id);
+  }
+
   @Get(':id')
   findOne(@Param('id') id: string) {
     return this.tournamentsService.findOne(id);

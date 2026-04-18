@@ -38,6 +38,25 @@ type TournamentMatchRecord = {
   score: string | null;
 };
 
+type TournamentAlertType =
+  | 'BRACKET_READY'
+  | 'MATCH_STARTED'
+  | 'MATCH_FINISHED';
+
+type TournamentAlertMatch = {
+  id: string;
+  stage: string;
+  matchNumber: number;
+  courtLabel: string;
+  scheduledAt: Date;
+  teamOneLabel: string;
+  teamTwoLabel: string;
+  winnerLabel: string | null;
+  status: TournamentMatchStatus;
+  score: string | null;
+  updatedAt: Date;
+};
+
 const STAGE_SEQUENCE = ['octavos', 'cuartos', 'semis', 'final'] as const;
 type StageKey = (typeof STAGE_SEQUENCE)[number];
 
@@ -246,6 +265,62 @@ export class TournamentsService {
       summary: this.buildSummary(matches),
       stages,
     };
+  }
+
+  async getMyAlerts(userId: string) {
+    const tournaments = await this.prisma.tournament.findMany({
+      where: {
+        registrations: {
+          some: {
+            OR: [{ userId }, { partnerUserId: userId }],
+            status: {
+              not: TournamentRegistrationStatus.CANCELED,
+            },
+          },
+        },
+      },
+      orderBy: {
+        updatedAt: 'desc',
+      },
+      include: {
+        registrations: {
+          where: {
+            status: {
+              not: TournamentRegistrationStatus.CANCELED,
+            },
+          },
+          include: {
+            user: {
+              select: {
+                id: true,
+                name: true,
+              },
+            },
+            partnerUser: {
+              select: {
+                id: true,
+                name: true,
+              },
+            },
+          },
+        },
+        matches: true,
+      },
+    });
+
+    const alerts = tournaments
+      .map((tournament) => this.buildTournamentAlert(tournament, userId))
+      .filter((alert) => alert != null)
+      .sort(
+        (left, right) =>
+          right!.occurredAt.getTime() - left!.occurredAt.getTime(),
+      )
+      .map((alert) => ({
+        ...alert!,
+        occurredAt: alert!.occurredAt.toISOString(),
+      }));
+
+    return { alerts };
   }
 
   async generateBracket(tournamentId: string, userId: string) {
@@ -882,6 +957,144 @@ export class TournamentsService {
       score: match.score,
       winnerLabel: match.winnerLabel,
     };
+  }
+
+  private buildTournamentAlert(
+    tournament: {
+      id: string;
+      title: string;
+      category: string;
+      location: string;
+      startsAt: Date;
+      registrations: Array<{
+        userId: string;
+        partnerUserId: string | null;
+        mode: TournamentRegistrationMode;
+        status: TournamentRegistrationStatus;
+        user: { id: string; name: string };
+        partnerUser: { id: string; name: string } | null;
+      }>;
+      matches: TournamentAlertMatch[];
+    },
+    userId: string,
+  ) {
+    if (tournament.matches.length == 0) {
+      return null;
+    }
+
+    const teamLabels = new Set(
+      tournament.registrations
+        .filter(
+          (registration) =>
+            registration.mode === TournamentRegistrationMode.WITH_PARTNER &&
+            registration.partnerUser != null &&
+            registration.status === TournamentRegistrationStatus.CONFIRMED &&
+            (registration.userId === userId ||
+              registration.partnerUserId === userId),
+        )
+        .map(
+          (registration) =>
+            `${registration.user.name} / ${registration.partnerUser!.name}`.trim(),
+        ),
+    );
+
+    if (teamLabels.size === 0) {
+      return null;
+    }
+
+    const involvedMatches = tournament.matches.filter(
+      (match) =>
+        teamLabels.has(match.teamOneLabel.trim()) ||
+        teamLabels.has(match.teamTwoLabel.trim()),
+    );
+
+    if (involvedMatches.length === 0) {
+      return null;
+    }
+
+    involvedMatches.sort(
+      (left, right) => right.updatedAt.getTime() - left.updatedAt.getTime(),
+    );
+    const latest = involvedMatches[0];
+
+    const alertType: TournamentAlertType =
+      latest.status === TournamentMatchStatus.LIVE
+        ? 'MATCH_STARTED'
+        : latest.status === TournamentMatchStatus.FINISHED
+          ? 'MATCH_FINISHED'
+          : 'BRACKET_READY';
+
+    const nextMatch =
+      alertType === 'MATCH_FINISHED'
+        ? this.findNextMatchForWinner(tournament.matches, latest.winnerLabel)
+        : null;
+
+    const eventId = `${alertType}:${latest.id}:${latest.updatedAt.toISOString()}`;
+
+    return {
+      eventId,
+      type: alertType,
+      occurredAt: latest.updatedAt,
+      tournament: {
+        id: tournament.id,
+        title: tournament.title,
+        category: tournament.category,
+        location: tournament.location,
+        startsAt: tournament.startsAt.toISOString(),
+        registrationsCount: tournament.registrations.length,
+      },
+      match: this.mapAlertMatch(latest),
+      ...(nextMatch != null ? { nextMatch: this.mapAlertMatch(nextMatch) } : {}),
+    };
+  }
+
+  private mapAlertMatch(match: TournamentAlertMatch) {
+    return {
+      id: match.id,
+      courtLabel: match.courtLabel,
+      stageLabel: STAGE_LABELS[match.stage as StageKey] ?? match.stage,
+      teamOne: match.teamOneLabel,
+      teamTwo: match.teamTwoLabel,
+      status: match.status,
+      score: match.score,
+      winnerLabel: match.winnerLabel,
+      scheduledAt: match.scheduledAt.toISOString(),
+      updatedAt: match.updatedAt.toISOString(),
+    };
+  }
+
+  private findNextMatchForWinner(
+    allMatches: TournamentAlertMatch[],
+    winnerLabel: string | null,
+  ) {
+    if (winnerLabel == null || winnerLabel.trim().length === 0) {
+      return null;
+    }
+
+    const normalizedWinner = winnerLabel.trim();
+    const ranked = allMatches
+      .map((match) => ({
+        match,
+        stageRank: STAGE_SEQUENCE.indexOf(match.stage as StageKey),
+      }))
+      .filter(({ stageRank }) => stageRank >= 0)
+      .sort(
+        (left, right) =>
+          left.stageRank - right.stageRank ||
+          left.match.matchNumber - right.match.matchNumber,
+      );
+
+    for (const entry of ranked) {
+      if (
+        entry.match.status !== TournamentMatchStatus.FINISHED &&
+        (entry.match.teamOneLabel.trim() === normalizedWinner ||
+          entry.match.teamTwoLabel.trim() === normalizedWinner)
+      ) {
+        return entry.match;
+      }
+    }
+
+    return null;
   }
 
   private buildSummary(matches: TournamentMatchRecord[]) {
