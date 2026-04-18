@@ -46,11 +46,6 @@ export class TournamentsController {
     return this.tournamentsService.findAll();
   }
 
-  @Get(':id')
-  findOne(@Param('id') id: string) {
-    return this.tournamentsService.findOne(id);
-  }
-
   @UseGuards(JwtAuthGuard)
   @Get(':id/admin-matches')
   getAdminMatches(
@@ -67,6 +62,21 @@ export class TournamentsController {
     @CurrentUser() user: AuthenticatedUser,
   ) {
     return this.tournamentsService.getAdminBracket(id, user.id);
+  }
+
+  @Get(':id/matches')
+  getPublicMatches(@Param('id') id: string) {
+    return this.tournamentsService.getPublicMatches(id);
+  }
+
+  @Get(':id/bracket')
+  getPublicBracket(@Param('id') id: string) {
+    return this.tournamentsService.getPublicBracket(id);
+  }
+
+  @Get(':id')
+  findOne(@Param('id') id: string) {
+    return this.tournamentsService.findOne(id);
   }
 
   @UseGuards(JwtAuthGuard)

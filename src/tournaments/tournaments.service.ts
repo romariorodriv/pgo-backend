@@ -217,6 +217,37 @@ export class TournamentsService {
     };
   }
 
+  async getPublicMatches(tournamentId: string) {
+    const tournament = await this.ensureTournamentExists(tournamentId);
+    const matches = await this.getPersistedMatches(tournamentId);
+
+    return {
+      tournament: this.mapAdminTournament(tournament),
+      summary: this.buildSummary(matches),
+      matches: matches.map((match) => this.mapTournamentMatch(match)),
+    };
+  }
+
+  async getPublicBracket(tournamentId: string) {
+    const tournament = await this.ensureTournamentExists(tournamentId);
+    const matches = await this.getPersistedMatches(tournamentId);
+
+    const stages = Object.fromEntries(
+      STAGE_SEQUENCE.map((stage) => [
+        stage,
+        matches
+          .filter((match) => match.stage === stage)
+          .map((match) => this.mapTournamentMatch(match)),
+      ]),
+    );
+
+    return {
+      tournament: this.mapAdminTournament(tournament),
+      summary: this.buildSummary(matches),
+      stages,
+    };
+  }
+
   async generateBracket(tournamentId: string, userId: string) {
     const tournament = await this.ensureTournamentReadyForBracketGeneration(
       tournamentId,
@@ -733,6 +764,29 @@ export class TournamentsService {
       throw new BadRequestException(
         'Solo el creador puede administrar este torneo',
       );
+    }
+
+    return tournament;
+  }
+
+  private async ensureTournamentExists(
+    tournamentId: string,
+  ): Promise<AdminTournamentSelect> {
+    const tournament = await this.prisma.tournament.findUnique({
+      where: { id: tournamentId },
+      select: {
+        id: true,
+        title: true,
+        category: true,
+        location: true,
+        startsAt: true,
+        photoUrl: true,
+        createdById: true,
+      },
+    });
+
+    if (!tournament) {
+      throw new NotFoundException('Torneo no encontrado');
     }
 
     return tournament;
