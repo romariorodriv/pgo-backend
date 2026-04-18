@@ -41,7 +41,8 @@ type TournamentMatchRecord = {
 type TournamentAlertType =
   | 'BRACKET_READY'
   | 'MATCH_STARTED'
-  | 'MATCH_FINISHED';
+  | 'MATCH_FINISHED'
+  | 'TOURNAMENT_FINISHED';
 
 type TournamentAlertMatch = {
   id: string;
@@ -966,6 +967,8 @@ export class TournamentsService {
       category: string;
       location: string;
       startsAt: Date;
+      status: TournamentStatus;
+      updatedAt: Date;
       registrations: Array<{
         userId: string;
         partnerUserId: string | null;
@@ -1008,8 +1011,60 @@ export class TournamentsService {
         teamLabels.has(match.teamTwoLabel.trim()),
     );
 
-    if (involvedMatches.length === 0) {
+    if (involvedMatches.length === 0 && tournament.status !== TournamentStatus.COMPLETED) {
       return null;
+    }
+
+    if (tournament.status === TournamentStatus.COMPLETED) {
+      const finalMatch = tournament.matches
+        .filter((match) => match.stage === 'final')
+        .sort((left, right) => right.updatedAt.getTime() - left.updatedAt.getTime())[0];
+      const fallbackMatch = involvedMatches
+        .sort((left, right) => right.updatedAt.getTime() - left.updatedAt.getTime())[0];
+      const selectedMatch = finalMatch ?? fallbackMatch ?? tournament.matches[0];
+
+      if (!selectedMatch) {
+        return null;
+      }
+
+      const winnerLabel = selectedMatch.winnerLabel?.trim() ?? '';
+      const champions =
+        winnerLabel.length > 0 ? winnerLabel.split('/').map((item) => item.trim()).filter((item) => item.length > 0) : [];
+      const runnerLabel =
+        winnerLabel.length > 0
+          ? selectedMatch.teamOneLabel.trim() === winnerLabel
+            ? selectedMatch.teamTwoLabel
+            : selectedMatch.teamOneLabel
+          : '';
+      const runnersUp =
+        runnerLabel.trim().length > 0
+          ? runnerLabel.split('/').map((item) => item.trim()).filter((item) => item.length > 0)
+          : [];
+
+      const userLatestMatch = involvedMatches
+        .sort((left, right) => right.updatedAt.getTime() - left.updatedAt.getTime())[0];
+      const userResult =
+        userLatestMatch != null
+          ? `${STAGE_LABELS[userLatestMatch.stage as StageKey] ?? userLatestMatch.stage}`
+          : 'Participante';
+
+      return {
+        eventId: `TOURNAMENT_FINISHED:${tournament.id}:${tournament.updatedAt.toISOString()}`,
+        type: 'TOURNAMENT_FINISHED' as TournamentAlertType,
+        occurredAt: tournament.updatedAt,
+        tournament: {
+          id: tournament.id,
+          title: tournament.title,
+          category: tournament.category,
+          location: tournament.location,
+          startsAt: tournament.startsAt.toISOString(),
+          registrationsCount: tournament.registrations.length,
+        },
+        match: this.mapAlertMatch(selectedMatch),
+        userResult,
+        champions,
+        runnersUp,
+      };
     }
 
     involvedMatches.sort(
