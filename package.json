@@ -12,6 +12,7 @@
     "prisma:migrate": "prisma migrate dev",
     "prisma:studio": "prisma studio",
     "seed:demo": "ts-node scripts/seed-demo.ts",
+    "seed:pairing-2p": "ts-node scripts/seed-pairing-2p.ts",
     "cleanup:demo": "ts-node scripts/cleanup-demo.ts",
     "start": "nest start",
     "start:dev": "nest start --watch",
