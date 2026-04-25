@@ -58,6 +58,16 @@ type TournamentAlertMatch = {
   updatedAt: Date;
 };
 
+export type TournamentSharePreview = {
+  id: string;
+  title: string;
+  location: string;
+  district: string;
+  city: string;
+  startsAt: Date;
+  photoUrl: string | null;
+};
+
 const STAGE_SEQUENCE = ['octavos', 'cuartos', 'semis', 'final'] as const;
 type StageKey = (typeof STAGE_SEQUENCE)[number];
 
@@ -196,6 +206,27 @@ export class TournamentsService {
             createdAt: 'asc',
           },
         },
+      },
+    });
+
+    if (!tournament) {
+      throw new NotFoundException('Torneo no encontrado');
+    }
+
+    return tournament;
+  }
+
+  async findSharePreview(id: string): Promise<TournamentSharePreview> {
+    const tournament = await this.prisma.tournament.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        title: true,
+        location: true,
+        district: true,
+        city: true,
+        startsAt: true,
+        photoUrl: true,
       },
     });
 

@@ -1,11 +1,16 @@
 import { NestFactory } from '@nestjs/core';
-import { ValidationPipe } from '@nestjs/common';
+import { RequestMethod, ValidationPipe } from '@nestjs/common';
 import { json, urlencoded } from 'express';
 import { AppModule } from './app.module';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
-  app.setGlobalPrefix('api');
+  app.setGlobalPrefix('api', {
+    exclude: [
+      { path: 'share/tournaments/:id', method: RequestMethod.GET },
+      { path: 'share/tournaments/:id/image', method: RequestMethod.GET },
+    ],
+  });
   app.enableCors({
     origin: true,
     credentials: true,
