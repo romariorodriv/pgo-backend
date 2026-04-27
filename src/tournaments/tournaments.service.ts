@@ -60,6 +60,7 @@ type TournamentAlertMatch = {
 
 export type TournamentSharePreview = {
   id: string;
+  slug: string | null;
   title: string;
   location: string;
   district: string;
@@ -82,7 +83,7 @@ const STAGE_LABELS: Record<StageKey, string> = {
 export class TournamentsService {
   constructor(private readonly prisma: PrismaService) {}
 
-  create(
+  async create(
     createdById: string,
     title: string,
     tournamentType: string,
@@ -102,10 +103,13 @@ export class TournamentsService {
     status: TournamentStatus = TournamentStatus.PUBLISHED,
     registrationsOpen = true,
   ) {
+    const slug = await this.generateUniqueSlug(title);
+
     return this.prisma.tournament.create({
       data: {
         createdById,
         title,
+        slug,
         tournamentType,
         playerCapacity,
         modality,
@@ -159,8 +163,10 @@ export class TournamentsService {
   }
 
   async findOne(id: string) {
-    const tournament = await this.prisma.tournament.findUnique({
-      where: { id },
+    const tournament = await this.prisma.tournament.findFirst({
+      where: {
+        OR: [{ id }, { slug: id }],
+      },
       include: {
         createdBy: {
           select: {
@@ -216,11 +222,14 @@ export class TournamentsService {
     return tournament;
   }
 
-  async findSharePreview(id: string): Promise<TournamentSharePreview> {
-    const tournament = await this.prisma.tournament.findUnique({
-      where: { id },
+  async findSharePreview(identifier: string): Promise<TournamentSharePreview> {
+    const tournament = await this.prisma.tournament.findFirst({
+      where: {
+        OR: [{ id: identifier }, { slug: identifier }],
+      },
       select: {
         id: true,
+        slug: true,
         title: true,
         location: true,
         district: true,
@@ -238,7 +247,10 @@ export class TournamentsService {
   }
 
   async getAdminMatches(tournamentId: string, userId: string) {
-    const tournament = await this.ensureTournamentOwnership(tournamentId, userId);
+    const tournament = await this.ensureTournamentOwnership(
+      tournamentId,
+      userId,
+    );
     const matches = await this.getPersistedMatches(tournamentId);
 
     return {
@@ -249,7 +261,10 @@ export class TournamentsService {
   }
 
   async getAdminBracket(tournamentId: string, userId: string) {
-    const tournament = await this.ensureTournamentOwnership(tournamentId, userId);
+    const tournament = await this.ensureTournamentOwnership(
+      tournamentId,
+      userId,
+    );
     const matches = await this.getPersistedMatches(tournamentId);
 
     const stages = Object.fromEntries(
@@ -564,15 +579,16 @@ export class TournamentsService {
     }
 
     if (tournament.createdById !== userId) {
-      throw new BadRequestException(
-        'Solo el creador puede editar este torneo',
-      );
+      throw new BadRequestException('Solo el creador puede editar este torneo');
     }
 
     await this.prisma.tournament.update({
       where: { id: tournamentId },
       data: {
         ...(body.title != null ? { title: body.title } : {}),
+        ...(body.title != null
+          ? { slug: await this.generateUniqueSlug(body.title, tournamentId) }
+          : {}),
         ...(body.tournamentType != null
           ? { tournamentType: body.tournamentType }
           : {}),
@@ -601,6 +617,37 @@ export class TournamentsService {
     });
 
     return this.findOne(tournamentId);
+  }
+
+  private async generateUniqueSlug(title: string, currentId?: string) {
+    const baseSlug = this.slugify(title);
+    let candidate = baseSlug;
+    let suffix = 2;
+
+    while (true) {
+      const existing = await this.prisma.tournament.findUnique({
+        where: { slug: candidate },
+        select: { id: true },
+      });
+
+      if (!existing || existing.id === currentId) {
+        return candidate;
+      }
+
+      candidate = `${baseSlug}-${suffix}`;
+      suffix += 1;
+    }
+  }
+
+  private slugify(value: string) {
+    const normalized = value
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '');
+
+    return normalized.length > 0 ? normalized : 'torneo';
   }
 
   async registerSolo(
@@ -709,7 +756,9 @@ export class TournamentsService {
     adminUserId: string,
   ) {
     if (registrationId === partnerRegistrationId) {
-      throw new BadRequestException('Debes seleccionar dos inscripciones distintas');
+      throw new BadRequestException(
+        'Debes seleccionar dos inscripciones distintas',
+      );
     }
 
     await this.ensureTournamentOwnership(tournamentId, adminUserId);
@@ -740,7 +789,9 @@ export class TournamentsService {
     }
 
     if (registration.userId === partnerRegistration.userId) {
-      throw new BadRequestException('No puedes emparejar un jugador consigo mismo');
+      throw new BadRequestException(
+        'No puedes emparejar un jugador consigo mismo',
+      );
     }
 
     await this.prisma.$transaction(async (tx) => {
@@ -1026,9 +1077,8 @@ export class TournamentsService {
             (registration.userId === userId ||
               registration.partnerUserId === userId),
         )
-        .map(
-          (registration) =>
-            `${registration.user.name} / ${registration.partnerUser!.name}`.trim(),
+        .map((registration) =>
+          `${registration.user.name} / ${registration.partnerUser!.name}`.trim(),
         ),
     );
 
@@ -1042,17 +1092,24 @@ export class TournamentsService {
         teamLabels.has(match.teamTwoLabel.trim()),
     );
 
-    if (involvedMatches.length === 0 && tournament.status !== TournamentStatus.COMPLETED) {
+    if (
+      involvedMatches.length === 0 &&
+      tournament.status !== TournamentStatus.COMPLETED
+    ) {
       return null;
     }
 
     if (tournament.status === TournamentStatus.COMPLETED) {
       const finalMatch = tournament.matches
         .filter((match) => match.stage === 'final')
-        .sort((left, right) => right.updatedAt.getTime() - left.updatedAt.getTime())[0];
-      const fallbackMatch = involvedMatches
-        .sort((left, right) => right.updatedAt.getTime() - left.updatedAt.getTime())[0];
-      const selectedMatch = finalMatch ?? fallbackMatch ?? tournament.matches[0];
+        .sort(
+          (left, right) => right.updatedAt.getTime() - left.updatedAt.getTime(),
+        )[0];
+      const fallbackMatch = involvedMatches.sort(
+        (left, right) => right.updatedAt.getTime() - left.updatedAt.getTime(),
+      )[0];
+      const selectedMatch =
+        finalMatch ?? fallbackMatch ?? tournament.matches[0];
 
       if (!selectedMatch) {
         return null;
@@ -1060,7 +1117,12 @@ export class TournamentsService {
 
       const winnerLabel = selectedMatch.winnerLabel?.trim() ?? '';
       const champions =
-        winnerLabel.length > 0 ? winnerLabel.split('/').map((item) => item.trim()).filter((item) => item.length > 0) : [];
+        winnerLabel.length > 0
+          ? winnerLabel
+              .split('/')
+              .map((item) => item.trim())
+              .filter((item) => item.length > 0)
+          : [];
       const runnerLabel =
         winnerLabel.length > 0
           ? selectedMatch.teamOneLabel.trim() === winnerLabel
@@ -1069,11 +1131,15 @@ export class TournamentsService {
           : '';
       const runnersUp =
         runnerLabel.trim().length > 0
-          ? runnerLabel.split('/').map((item) => item.trim()).filter((item) => item.length > 0)
+          ? runnerLabel
+              .split('/')
+              .map((item) => item.trim())
+              .filter((item) => item.length > 0)
           : [];
 
-      const userLatestMatch = involvedMatches
-        .sort((left, right) => right.updatedAt.getTime() - left.updatedAt.getTime())[0];
+      const userLatestMatch = involvedMatches.sort(
+        (left, right) => right.updatedAt.getTime() - left.updatedAt.getTime(),
+      )[0];
       const userResult =
         userLatestMatch != null
           ? `${STAGE_LABELS[userLatestMatch.stage as StageKey] ?? userLatestMatch.stage}`
@@ -1130,7 +1196,9 @@ export class TournamentsService {
         registrationsCount: tournament.registrations.length,
       },
       match: this.mapAlertMatch(latest),
-      ...(nextMatch != null ? { nextMatch: this.mapAlertMatch(nextMatch) } : {}),
+      ...(nextMatch != null
+        ? { nextMatch: this.mapAlertMatch(nextMatch) }
+        : {}),
     };
   }
 
@@ -1269,10 +1337,7 @@ export class TournamentsService {
     );
   }
 
-  private ensureValidWinner(
-    match: TournamentMatchRecord,
-    winnerLabel: string,
-  ) {
+  private ensureValidWinner(match: TournamentMatchRecord, winnerLabel: string) {
     const normalizedWinner = winnerLabel.trim();
     const validLabels = [match.teamOneLabel.trim(), match.teamTwoLabel.trim()];
 
@@ -1289,9 +1354,7 @@ export class TournamentsService {
   ) {
     const matches = await tx.tournamentMatch.findMany({
       where: { tournamentId },
-      orderBy: [
-        { matchNumber: 'asc' },
-      ],
+      orderBy: [{ matchNumber: 'asc' }],
     });
 
     matches.sort((left, right) => {
@@ -1306,7 +1369,9 @@ export class TournamentsService {
       const currentStageMatches = matches.filter(
         (match) => match.stage === currentStage,
       );
-      const nextStageMatches = matches.filter((match) => match.stage === nextStage);
+      const nextStageMatches = matches.filter(
+        (match) => match.stage === nextStage,
+      );
 
       if (nextStageMatches.length === 0) {
         continue;
@@ -1344,12 +1409,12 @@ export class TournamentsService {
             teamOneLabel: desiredTeamOne,
             teamTwoLabel: desiredTeamTwo,
             ...(nextMatchNeedsReset
-                ? {
-                    status: TournamentMatchStatus.PENDING,
-                    score: null,
-                    winnerLabel: null,
-                  }
-                : {}),
+              ? {
+                  status: TournamentMatchStatus.PENDING,
+                  score: null,
+                  winnerLabel: null,
+                }
+              : {}),
           },
         });
 

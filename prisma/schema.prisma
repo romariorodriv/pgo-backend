@@ -11,13 +11,13 @@ datasource db {
   provider = "postgresql"
 }
 
-enum MatchType{
+enum MatchType {
   FRIENDLY
   RANKED
   TOURNAMENT
 }
 
-enum MatchStatus{
+enum MatchStatus {
   DRAFT
   COMPLETED
   CANCELED
@@ -55,18 +55,18 @@ enum TournamentMatchStatus {
 }
 
 model User {
-  id             String   @id @default(uuid())
-  name           String
-  email          String   @unique
-  googleId       String?  @unique @map("google_id")
-  passwordHash   String   @map("password_hash")
-  createdAt      DateTime @default(now()) @map("created_at")
-  updatedAt      DateTime @updatedAt @map("updated_at")
-  profile        Profile?
-  createdMatches Match[]
-  createdTournaments Tournament[]
-  matchParticipations MatchParticipant[]
-  tournamentRegistrations TournamentRegistration[] @relation("TournamentRegistrant")
+  id                               String                   @id @default(uuid())
+  name                             String
+  email                            String                   @unique
+  googleId                         String?                  @unique @map("google_id")
+  passwordHash                     String                   @map("password_hash")
+  createdAt                        DateTime                 @default(now()) @map("created_at")
+  updatedAt                        DateTime                 @updatedAt @map("updated_at")
+  profile                          Profile?
+  createdMatches                   Match[]
+  createdTournaments               Tournament[]
+  matchParticipations              MatchParticipant[]
+  tournamentRegistrations          TournamentRegistration[] @relation("TournamentRegistrant")
   partneredTournamentRegistrations TournamentRegistration[] @relation("TournamentPartner")
 
   @@map("users")
@@ -97,20 +97,20 @@ model Profile {
 }
 
 model Match {
-  id          String    @id @default(uuid())
-  createdById String
-  createdBy   User      @relation(fields:[createdById],references:[id])
-  clubName    String
-  playedAt    DateTime 
-  matchType   MatchType
-  status      MatchStatus
-  photoUrl    String?   @map("photo_url")
-  description String?
-  winnerTeam  Int?      @map("winner_team")
-  games       Json?
-  xpAwardedAt DateTime? @map("xp_awarded_at")
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  id           String             @id @default(uuid())
+  createdById  String
+  createdBy    User               @relation(fields: [createdById], references: [id])
+  clubName     String
+  playedAt     DateTime
+  matchType    MatchType
+  status       MatchStatus
+  photoUrl     String?            @map("photo_url")
+  description  String?
+  winnerTeam   Int?               @map("winner_team")
+  games        Json?
+  xpAwardedAt  DateTime?          @map("xp_awarded_at")
+  createdAt    DateTime           @default(now())
+  updatedAt    DateTime           @updatedAt
   participants MatchParticipant[]
 
   @@map("matches")
@@ -132,48 +132,49 @@ model MatchParticipant {
 }
 
 model Tournament {
-  id             String           @id @default(uuid())
-  createdById    String           @map("created_by_id")
-  createdBy      User             @relation(fields: [createdById], references: [id])
-  title          String
-  tournamentType String           @map("tournament_type")
-  playerCapacity Int              @map("player_capacity")
-  modality       String
-  format         String
-  location       String
-  address        String?
-  city           String
-  district       String
-  startsAt       DateTime         @map("starts_at")
-  prize          String
-  entryFee       Int              @map("entry_fee")
-  category       String
-  status         TournamentStatus @default(PUBLISHED)
-  registrationsOpen Boolean       @default(true) @map("registrations_open")
-  photoUrl       String?          @map("photo_url")
-  description    String?
-  createdAt      DateTime         @default(now()) @map("created_at")
-  updatedAt      DateTime         @updatedAt @map("updated_at")
-  registrations  TournamentRegistration[]
-  matches        TournamentMatch[]
+  id                String                   @id @default(uuid())
+  createdById       String                   @map("created_by_id")
+  createdBy         User                     @relation(fields: [createdById], references: [id])
+  title             String
+  slug              String?                  @unique
+  tournamentType    String                   @map("tournament_type")
+  playerCapacity    Int                      @map("player_capacity")
+  modality          String
+  format            String
+  location          String
+  address           String?
+  city              String
+  district          String
+  startsAt          DateTime                 @map("starts_at")
+  prize             String
+  entryFee          Int                      @map("entry_fee")
+  category          String
+  status            TournamentStatus         @default(PUBLISHED)
+  registrationsOpen Boolean                  @default(true) @map("registrations_open")
+  photoUrl          String?                  @map("photo_url")
+  description       String?
+  createdAt         DateTime                 @default(now()) @map("created_at")
+  updatedAt         DateTime                 @updatedAt @map("updated_at")
+  registrations     TournamentRegistration[]
+  matches           TournamentMatch[]
 
   @@map("tournaments")
 }
 
 model TournamentRegistration {
-  id             String                       @id @default(uuid())
-  tournamentId    String                      @map("tournament_id")
-  userId          String                      @map("user_id")
-  partnerUserId   String?                     @map("partner_user_id")
-  mode            TournamentRegistrationMode
-  status          TournamentRegistrationStatus @default(PENDING)
-  preferredSide   String?                     @map("preferred_side")
-  availability    String?
-  createdAt       DateTime                    @default(now()) @map("created_at")
-  updatedAt       DateTime                    @updatedAt @map("updated_at")
-  tournament      Tournament                  @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
-  user            User                        @relation("TournamentRegistrant", fields: [userId], references: [id], onDelete: Restrict)
-  partnerUser     User?                       @relation("TournamentPartner", fields: [partnerUserId], references: [id], onDelete: Restrict)
+  id            String                       @id @default(uuid())
+  tournamentId  String                       @map("tournament_id")
+  userId        String                       @map("user_id")
+  partnerUserId String?                      @map("partner_user_id")
+  mode          TournamentRegistrationMode
+  status        TournamentRegistrationStatus @default(PENDING)
+  preferredSide String?                      @map("preferred_side")
+  availability  String?
+  createdAt     DateTime                     @default(now()) @map("created_at")
+  updatedAt     DateTime                     @updatedAt @map("updated_at")
+  tournament    Tournament                   @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  user          User                         @relation("TournamentRegistrant", fields: [userId], references: [id], onDelete: Restrict)
+  partnerUser   User?                        @relation("TournamentPartner", fields: [partnerUserId], references: [id], onDelete: Restrict)
 
   @@unique([tournamentId, userId])
   @@unique([tournamentId, partnerUserId])
@@ -181,20 +182,20 @@ model TournamentRegistration {
 }
 
 model TournamentMatch {
-  id              String              @id @default(uuid())
-  tournamentId     String             @map("tournament_id")
-  stage            String
-  matchNumber      Int                @map("match_number")
-  courtLabel       String             @map("court_label")
-  scheduledAt      DateTime           @map("scheduled_at")
-  teamOneLabel     String             @map("team_one_label")
-  teamTwoLabel     String             @map("team_two_label")
-  winnerLabel      String?            @map("winner_label")
-  status           TournamentMatchStatus @default(PENDING)
-  score            String?
-  createdAt        DateTime           @default(now()) @map("created_at")
-  updatedAt        DateTime           @updatedAt @map("updated_at")
-  tournament       Tournament         @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  id           String                @id @default(uuid())
+  tournamentId String                @map("tournament_id")
+  stage        String
+  matchNumber  Int                   @map("match_number")
+  courtLabel   String                @map("court_label")
+  scheduledAt  DateTime              @map("scheduled_at")
+  teamOneLabel String                @map("team_one_label")
+  teamTwoLabel String                @map("team_two_label")
+  winnerLabel  String?               @map("winner_label")
+  status       TournamentMatchStatus @default(PENDING)
+  score        String?
+  createdAt    DateTime              @default(now()) @map("created_at")
+  updatedAt    DateTime              @updatedAt @map("updated_at")
+  tournament   Tournament            @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
 
   @@unique([tournamentId, stage, matchNumber])
   @@map("tournament_matches")
