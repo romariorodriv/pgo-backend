@@ -13,6 +13,7 @@ async function bootstrap() {
       { path: 'torneos/:slug', method: RequestMethod.GET },
       { path: 'torneos/:slug/image', method: RequestMethod.GET },
       { path: 'torneos/:slug/image.jpg', method: RequestMethod.GET },
+      { path: '.well-known/assetlinks.json', method: RequestMethod.GET },
     ],
   });
   app.enableCors({

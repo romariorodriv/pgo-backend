@@ -31,6 +31,7 @@ type TournamentMatchRecord = {
   matchNumber: number;
   courtLabel: string;
   scheduledAt: Date;
+  startedAt: Date | null;
   teamOneLabel: string;
   teamTwoLabel: string;
   winnerLabel: string | null;
@@ -69,14 +70,15 @@ export type TournamentSharePreview = {
   photoUrl: string | null;
 };
 
-const STAGE_SEQUENCE = ['octavos', 'cuartos', 'semis', 'final'] as const;
-type StageKey = (typeof STAGE_SEQUENCE)[number];
+const FINAL_STAGE = 'final';
+const GAME_STAGE_PREFIX = 'juego-';
+const TOURNAMENT_GAME_COUNT = 5;
 
-const STAGE_LABELS: Record<StageKey, string> = {
-  octavos: 'octavos',
-  cuartos: 'cuartos',
-  semis: 'semis',
-  final: 'final',
+const LEGACY_STAGE_RANK: Record<string, number> = {
+  octavos: 1,
+  cuartos: 2,
+  semis: 3,
+  final: 999,
 };
 
 @Injectable()
@@ -267,14 +269,7 @@ export class TournamentsService {
     );
     const matches = await this.getPersistedMatches(tournamentId);
 
-    const stages = Object.fromEntries(
-      STAGE_SEQUENCE.map((stage) => [
-        stage,
-        matches
-          .filter((match) => match.stage === stage)
-          .map((match) => this.mapTournamentMatch(match)),
-      ]),
-    );
+    const stages = this.groupMatchesByStage(matches);
 
     return {
       tournament: this.mapAdminTournament(tournament),
@@ -298,14 +293,7 @@ export class TournamentsService {
     const tournament = await this.ensureTournamentExists(tournamentId);
     const matches = await this.getPersistedMatches(tournamentId);
 
-    const stages = Object.fromEntries(
-      STAGE_SEQUENCE.map((stage) => [
-        stage,
-        matches
-          .filter((match) => match.stage === stage)
-          .map((match) => this.mapTournamentMatch(match)),
-      ]),
-    );
+    const stages = this.groupMatchesByStage(matches);
 
     return {
       tournament: this.mapAdminTournament(tournament),
@@ -498,6 +486,7 @@ export class TournamentsService {
       where: { id: match.id },
       data: {
         status: TournamentMatchStatus.LIVE,
+        startedAt: new Date(),
         score: match.score ?? '0-0',
       },
     });
@@ -981,10 +970,22 @@ export class TournamentsService {
     });
 
     return matches.sort((left, right) => {
-      const leftStage = STAGE_SEQUENCE.indexOf(left.stage as StageKey);
-      const rightStage = STAGE_SEQUENCE.indexOf(right.stage as StageKey);
+      const leftStage = this.getStageRank(left.stage);
+      const rightStage = this.getStageRank(right.stage);
       return leftStage - rightStage || left.matchNumber - right.matchNumber;
     });
+  }
+
+  private groupMatchesByStage(matches: TournamentMatchRecord[]) {
+    const stages: Record<string, ReturnType<typeof this.mapTournamentMatch>[]> =
+      {};
+
+    for (const match of matches) {
+      stages[match.stage] ??= [];
+      stages[match.stage].push(this.mapTournamentMatch(match));
+    }
+
+    return stages;
   }
 
   private async ensureAdminCanManageRegistrations(tournamentId: string) {
@@ -1032,10 +1033,11 @@ export class TournamentsService {
     return {
       id: match.id,
       courtLabel: match.courtLabel,
-      stageLabel: STAGE_LABELS[match.stage as StageKey] ?? match.stage,
+      stageLabel: this.getStageLabel(match.stage),
       teamOne: match.teamOneLabel,
       teamTwo: match.teamTwoLabel,
       scheduledAt: match.scheduledAt.toISOString(),
+      startedAt: match.startedAt?.toISOString() ?? null,
       status: match.status,
       score: match.score,
       winnerLabel: match.winnerLabel,
@@ -1142,7 +1144,7 @@ export class TournamentsService {
       )[0];
       const userResult =
         userLatestMatch != null
-          ? `${STAGE_LABELS[userLatestMatch.stage as StageKey] ?? userLatestMatch.stage}`
+          ? this.getStageLabel(userLatestMatch.stage)
           : 'Participante';
 
       return {
@@ -1206,7 +1208,7 @@ export class TournamentsService {
     return {
       id: match.id,
       courtLabel: match.courtLabel,
-      stageLabel: STAGE_LABELS[match.stage as StageKey] ?? match.stage,
+      stageLabel: this.getStageLabel(match.stage),
       teamOne: match.teamOneLabel,
       teamTwo: match.teamTwoLabel,
       status: match.status,
@@ -1229,7 +1231,7 @@ export class TournamentsService {
     const ranked = allMatches
       .map((match) => ({
         match,
-        stageRank: STAGE_SEQUENCE.indexOf(match.stage as StageKey),
+        stageRank: this.getStageRank(match.stage),
       }))
       .filter(({ stageRank }) => stageRank >= 0)
       .sort(
@@ -1267,53 +1269,58 @@ export class TournamentsService {
     tournamentId: string,
     startsAt: Date,
     pairings: Array<{ teamLabel: string }>,
+    playerCapacity: number,
+    format: string,
   ): Prisma.TournamentMatchCreateManyInput[] {
     const matches: Prisma.TournamentMatchCreateManyInput[] = [];
-    let stageTeams = [...pairings.map((pair) => pair.teamLabel)];
-    let stageIndex = 0;
-    let courtSeed = 1;
+    const courtCount = this.inferCourtCount(playerCapacity, format);
+    const groups = this.buildTournamentGroups(pairings, courtCount);
 
-    while (stageIndex < STAGE_SEQUENCE.length) {
-      const stage = STAGE_SEQUENCE[stageIndex];
-      const stageMatchCount =
-        stage === 'final' ? 1 : Math.max(1, Math.ceil(stageTeams.length / 2));
+    for (let gameIndex = 1; gameIndex <= TOURNAMENT_GAME_COUNT; gameIndex++) {
+      const stage = `${GAME_STAGE_PREFIX}${gameIndex}`;
+      let courtNumber = 1;
 
-      for (let matchIndex = 0; matchIndex < stageMatchCount; matchIndex++) {
-        const teamOne = stageTeams[matchIndex * 2] ?? 'TBD';
-        const teamTwo = stageTeams[matchIndex * 2 + 1] ?? 'TBD';
+      for (const group of groups) {
+        const roundMatches = this.buildRotatingPairings(group, gameIndex - 1);
 
-        matches.push({
-          tournamentId,
-          stage,
-          matchNumber: matchIndex + 1,
-          courtLabel: `CANCHA ${courtSeed}`,
-          scheduledAt: new Date(
-            startsAt.getTime() + matches.length * 20 * 60 * 1000,
-          ),
-          teamOneLabel: teamOne,
-          teamTwoLabel: teamTwo,
-          status:
-            teamOne !== 'TBD' && teamTwo !== 'TBD'
-              ? TournamentMatchStatus.PENDING
-              : TournamentMatchStatus.PENDING,
-          score: null,
-          winnerLabel: null,
-        });
-        courtSeed += 1;
-      }
+        for (const [teamOne, teamTwo] of roundMatches) {
+          if (courtNumber > courtCount) {
+            break;
+          }
 
-      if (stage === 'final') {
-        break;
-      }
-
-      stageTeams = Array.from({ length: stageMatchCount }, () => 'TBD');
-      stageIndex += 1;
-
-      if (stageTeams.length <= 1 && stage !== 'semis') {
-        // Preserve all stages expected by the admin UI.
-        continue;
+          matches.push({
+            tournamentId,
+            stage,
+            matchNumber: courtNumber,
+            courtLabel: `CANCHA ${courtNumber}`,
+            scheduledAt: new Date(
+              startsAt.getTime() + (gameIndex - 1) * 25 * 60 * 1000,
+            ),
+            teamOneLabel: teamOne,
+            teamTwoLabel: teamTwo,
+            status: TournamentMatchStatus.PENDING,
+            score: null,
+            winnerLabel: null,
+          });
+          courtNumber += 1;
+        }
       }
     }
+
+    matches.push({
+      tournamentId,
+      stage: FINAL_STAGE,
+      matchNumber: 1,
+      courtLabel: 'CANCHA 1',
+      scheduledAt: new Date(
+        startsAt.getTime() + TOURNAMENT_GAME_COUNT * 25 * 60 * 1000,
+      ),
+      teamOneLabel: 'TBD',
+      teamTwoLabel: 'TBD',
+      status: TournamentMatchStatus.PENDING,
+      score: null,
+      winnerLabel: null,
+    });
 
     return matches;
   }
@@ -1321,6 +1328,8 @@ export class TournamentsService {
   private buildBracketMatchesFromTournament(tournament: {
     id: string;
     startsAt: Date;
+    playerCapacity: number;
+    format: string;
     registrations: Array<{
       user: { name: string };
       partnerUser: { name: string } | null;
@@ -1334,7 +1343,183 @@ export class TournamentsService {
       tournament.id,
       tournament.startsAt,
       pairings,
+      tournament.playerCapacity,
+      tournament.format,
     );
+  }
+
+  private inferCourtCount(playerCapacity: number, format: string) {
+    const playersPerCourt = format.toLowerCase().includes('single') ? 2 : 4;
+    const inferred = Math.floor(playerCapacity / playersPerCourt);
+    return Math.min(6, Math.max(3, inferred));
+  }
+
+  private buildTournamentGroups(
+    pairings: Array<{ teamLabel: string }>,
+    courtCount: number,
+  ) {
+    if (courtCount === 6 && pairings.length >= 12) {
+      return [pairings.slice(0, 6), pairings.slice(6, 12)];
+    }
+
+    return [pairings.slice(0, courtCount * 2)];
+  }
+
+  private buildRotatingPairings(
+    pairings: Array<{ teamLabel: string }>,
+    roundIndex: number,
+  ) {
+    const labels = pairings.map((pair) => pair.teamLabel);
+    const evenLabels = labels.length % 2 === 0 ? labels : [...labels, 'TBD'];
+    const fixed = evenLabels[0];
+    const rotating = evenLabels.slice(1);
+    const rotation = rotating.length === 0 ? 0 : roundIndex % rotating.length;
+    const rotated = [
+      fixed,
+      ...rotating.slice(rotation),
+      ...rotating.slice(0, rotation),
+    ];
+    const matches: Array<[string, string]> = [];
+
+    for (let index = 0; index < rotated.length / 2; index++) {
+      const teamOne = rotated[index];
+      const teamTwo = rotated[rotated.length - 1 - index];
+
+      if (teamOne !== 'TBD' && teamTwo !== 'TBD') {
+        matches.push([teamOne, teamTwo]);
+      }
+    }
+
+    return matches;
+  }
+
+  private getStageRank(stage: string) {
+    if (stage === FINAL_STAGE) {
+      return 999;
+    }
+
+    if (stage.startsWith(GAME_STAGE_PREFIX)) {
+      const number = Number(stage.replace(GAME_STAGE_PREFIX, ''));
+      return Number.isFinite(number) ? number : 900;
+    }
+
+    return LEGACY_STAGE_RANK[stage] ?? 500;
+  }
+
+  private getStageLabel(stage: string) {
+    if (stage === FINAL_STAGE) {
+      return 'Final';
+    }
+
+    if (stage.startsWith(GAME_STAGE_PREFIX)) {
+      const number = Number(stage.replace(GAME_STAGE_PREFIX, ''));
+      return Number.isFinite(number) ? `Juego ${number}` : stage;
+    }
+
+    return stage;
+  }
+
+  private async rebuildTournamentFinal(
+    tx: Prisma.TransactionClient,
+    matches: TournamentMatchRecord[],
+  ) {
+    const finalMatch = matches.find((match) => match.stage === FINAL_STAGE);
+
+    if (!finalMatch) {
+      return;
+    }
+
+    const gameMatches = matches.filter((match) =>
+      match.stage.startsWith(GAME_STAGE_PREFIX),
+    );
+    const allGamesFinished = gameMatches.every(
+      (match) => match.status === TournamentMatchStatus.FINISHED,
+    );
+
+    if (!allGamesFinished) {
+      return;
+    }
+
+    const standings = new Map<
+      string,
+      { teamLabel: string; wins: number; losses: number }
+    >();
+
+    for (const match of gameMatches) {
+      const teamOne = match.teamOneLabel.trim();
+      const teamTwo = match.teamTwoLabel.trim();
+      const winner = match.winnerLabel?.trim();
+
+      for (const team of [teamOne, teamTwo]) {
+        if (team.length > 0 && team !== 'TBD') {
+          standings.set(
+            team,
+            standings.get(team) ?? {
+              teamLabel: team,
+              wins: 0,
+              losses: 0,
+            },
+          );
+        }
+      }
+
+      if (winner != null && winner.length > 0) {
+        const winnerStanding = standings.get(winner);
+        if (winnerStanding) {
+          winnerStanding.wins += 1;
+        }
+
+        const loser = winner === teamOne ? teamTwo : teamOne;
+        const loserStanding = standings.get(loser);
+        if (loserStanding) {
+          loserStanding.losses += 1;
+        }
+      }
+    }
+
+    const finalists = [...standings.values()]
+      .sort(
+        (left, right) =>
+          right.wins - left.wins ||
+          left.losses - right.losses ||
+          left.teamLabel.localeCompare(right.teamLabel),
+      )
+      .slice(0, 2)
+      .map((standing) => standing.teamLabel);
+
+    if (finalists.length < 2) {
+      return;
+    }
+
+    const desiredTeamOne = finalists[0];
+    const desiredTeamTwo = finalists[1];
+    const teamLabelsChanged =
+      finalMatch.teamOneLabel !== desiredTeamOne ||
+      finalMatch.teamTwoLabel !== desiredTeamTwo;
+
+    if (!teamLabelsChanged) {
+      return;
+    }
+
+    const finalNeedsReset =
+      finalMatch.status !== TournamentMatchStatus.PENDING ||
+      finalMatch.score !== null ||
+      finalMatch.winnerLabel !== null;
+
+    await tx.tournamentMatch.update({
+      where: { id: finalMatch.id },
+      data: {
+        teamOneLabel: desiredTeamOne,
+        teamTwoLabel: desiredTeamTwo,
+        ...(finalNeedsReset
+          ? {
+              status: TournamentMatchStatus.PENDING,
+              score: null,
+              winnerLabel: null,
+            }
+          : {}),
+      },
+    });
   }
 
   private ensureValidWinner(match: TournamentMatchRecord, winnerLabel: string) {
@@ -1358,14 +1543,23 @@ export class TournamentsService {
     });
 
     matches.sort((left, right) => {
-      const leftStage = STAGE_SEQUENCE.indexOf(left.stage as StageKey);
-      const rightStage = STAGE_SEQUENCE.indexOf(right.stage as StageKey);
+      const leftStage = this.getStageRank(left.stage);
+      const rightStage = this.getStageRank(right.stage);
       return leftStage - rightStage || left.matchNumber - right.matchNumber;
     });
 
-    for (let index = 0; index < STAGE_SEQUENCE.length - 1; index++) {
-      const currentStage = STAGE_SEQUENCE[index];
-      const nextStage = STAGE_SEQUENCE[index + 1];
+    const stages = [...new Set(matches.map((match) => match.stage))].sort(
+      (left, right) => this.getStageRank(left) - this.getStageRank(right),
+    );
+
+    if (stages.some((stage) => stage.startsWith(GAME_STAGE_PREFIX))) {
+      await this.rebuildTournamentFinal(tx, matches);
+      return;
+    }
+
+    for (let index = 0; index < stages.length - 1; index++) {
+      const currentStage = stages[index];
+      const nextStage = stages[index + 1];
       const currentStageMatches = matches.filter(
         (match) => match.stage === currentStage,
       );

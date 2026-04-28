@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
+import { AppLinksController } from './app-links.controller';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { PrismaModule } from './prisma/prisma.module';
@@ -21,7 +22,7 @@ import { TournamentsModule } from './tournaments/tournaments.module';
     ProfileModule,
     TournamentsModule,
   ],
-  controllers: [AppController],
+  controllers: [AppController, AppLinksController],
   providers: [AppService],
 })
 export class AppModule {}

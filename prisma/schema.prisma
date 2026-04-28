@@ -188,6 +188,7 @@ model TournamentMatch {
   matchNumber  Int                   @map("match_number")
   courtLabel   String                @map("court_label")
   scheduledAt  DateTime              @map("scheduled_at")
+  startedAt    DateTime?             @map("started_at")
   teamOneLabel String                @map("team_one_label")
   teamTwoLabel String                @map("team_two_label")
   winnerLabel  String?               @map("winner_label")
