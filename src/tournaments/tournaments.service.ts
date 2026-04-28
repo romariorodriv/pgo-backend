@@ -395,6 +395,18 @@ export class TournamentsService {
     return this.getAdminBracket(tournamentId, userId);
   }
 
+  async deleteBracket(tournamentId: string, userId: string) {
+    await this.ensureTournamentOwnership(tournamentId, userId);
+
+    const result = await this.prisma.tournamentMatch.deleteMany({
+      where: { tournamentId },
+    });
+
+    return {
+      deletedMatches: result.count,
+    };
+  }
+
   private async ensureTournamentReadyForBracketGeneration(
     tournamentId: string,
     userId: string,

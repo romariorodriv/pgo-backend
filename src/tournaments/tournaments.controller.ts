@@ -1,4 +1,12 @@
-import { Body, Controller, Get, Param, Patch, Post, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  Patch,
+  Post,
+  UseGuards,
+} from '@nestjs/common';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
@@ -101,6 +109,15 @@ export class TournamentsController {
     @CurrentUser() user: AuthenticatedUser,
   ) {
     return this.tournamentsService.closeAndGenerateBracket(id, user.id);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post(':id/delete-bracket')
+  deleteBracket(
+    @Param('id') id: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.tournamentsService.deleteBracket(id, user.id);
   }
 
   @UseGuards(JwtAuthGuard)
