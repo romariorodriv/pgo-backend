@@ -404,10 +404,8 @@ export class TournamentsService {
       include: {
         registrations: {
           where: {
-            status: TournamentRegistrationStatus.CONFIRMED,
-            mode: TournamentRegistrationMode.WITH_PARTNER,
-            partnerUserId: {
-              not: null,
+            status: {
+              not: TournamentRegistrationStatus.CANCELED,
             },
           },
           include: {
@@ -441,7 +439,26 @@ export class TournamentsService {
       );
     }
 
-    const pairings = tournament.registrations.map((registration) => ({
+    const pendingSoloRegistrations = tournament.registrations.filter(
+      (registration) =>
+        registration.mode === TournamentRegistrationMode.SOLO ||
+        registration.partnerUserId == null,
+    );
+
+    if (pendingSoloRegistrations.length > 0) {
+      throw new BadRequestException(
+        'Hay jugadores buscando pareja. Emparejalos antes de generar cruces automaticamente.',
+      );
+    }
+
+    const confirmedPairings = tournament.registrations.filter(
+      (registration) =>
+        registration.status === TournamentRegistrationStatus.CONFIRMED &&
+        registration.mode === TournamentRegistrationMode.WITH_PARTNER &&
+        registration.partnerUserId != null,
+    );
+
+    const pairings = confirmedPairings.map((registration) => ({
       teamLabel: `${registration.user.name} / ${registration.partnerUser!.name}`,
     }));
 
@@ -1272,57 +1289,14 @@ export class TournamentsService {
     playerCapacity: number,
     format: string,
   ): Prisma.TournamentMatchCreateManyInput[] {
-    const matches: Prisma.TournamentMatchCreateManyInput[] = [];
-    const courtCount = this.inferCourtCount(playerCapacity, format);
-    const groups = this.buildTournamentGroups(pairings, courtCount);
-
-    for (let gameIndex = 1; gameIndex <= TOURNAMENT_GAME_COUNT; gameIndex++) {
-      const stage = `${GAME_STAGE_PREFIX}${gameIndex}`;
-      let courtNumber = 1;
-
-      for (const group of groups) {
-        const roundMatches = this.buildRotatingPairings(group, gameIndex - 1);
-
-        for (const [teamOne, teamTwo] of roundMatches) {
-          if (courtNumber > courtCount) {
-            break;
-          }
-
-          matches.push({
-            tournamentId,
-            stage,
-            matchNumber: courtNumber,
-            courtLabel: `CANCHA ${courtNumber}`,
-            scheduledAt: new Date(
-              startsAt.getTime() + (gameIndex - 1) * 25 * 60 * 1000,
-            ),
-            teamOneLabel: teamOne,
-            teamTwoLabel: teamTwo,
-            status: TournamentMatchStatus.PENDING,
-            score: null,
-            winnerLabel: null,
-          });
-          courtNumber += 1;
-        }
-      }
-    }
-
-    matches.push({
+    return this.buildGameMatches(
       tournamentId,
-      stage: FINAL_STAGE,
-      matchNumber: 1,
-      courtLabel: 'CANCHA 1',
-      scheduledAt: new Date(
-        startsAt.getTime() + TOURNAMENT_GAME_COUNT * 25 * 60 * 1000,
-      ),
-      teamOneLabel: 'TBD',
-      teamTwoLabel: 'TBD',
-      status: TournamentMatchStatus.PENDING,
-      score: null,
-      winnerLabel: null,
-    });
-
-    return matches;
+      startsAt,
+      pairings,
+      playerCapacity,
+      format,
+      1,
+    );
   }
 
   private buildBracketMatchesFromTournament(tournament: {
@@ -1352,6 +1326,49 @@ export class TournamentsService {
     const playersPerCourt = format.toLowerCase().includes('single') ? 2 : 4;
     const inferred = Math.floor(playerCapacity / playersPerCourt);
     return Math.min(6, Math.max(3, inferred));
+  }
+
+  private buildGameMatches(
+    tournamentId: string,
+    startsAt: Date,
+    pairings: Array<{ teamLabel: string }>,
+    playerCapacity: number,
+    format: string,
+    gameIndex: number,
+  ): Prisma.TournamentMatchCreateManyInput[] {
+    const matches: Prisma.TournamentMatchCreateManyInput[] = [];
+    const courtCount = this.inferCourtCount(playerCapacity, format);
+    const groups = this.buildTournamentGroups(pairings, courtCount);
+    const stage = `${GAME_STAGE_PREFIX}${gameIndex}`;
+    let courtNumber = 1;
+
+    for (const group of groups) {
+      const roundMatches = this.buildRotatingPairings(group, gameIndex - 1);
+
+      for (const [teamOne, teamTwo] of roundMatches) {
+        if (courtNumber > courtCount) {
+          break;
+        }
+
+        matches.push({
+          tournamentId,
+          stage,
+          matchNumber: courtNumber,
+          courtLabel: `CANCHA ${courtNumber}`,
+          scheduledAt: new Date(
+            startsAt.getTime() + (gameIndex - 1) * 25 * 60 * 1000,
+          ),
+          teamOneLabel: teamOne,
+          teamTwoLabel: teamTwo,
+          status: TournamentMatchStatus.PENDING,
+          score: null,
+          winnerLabel: null,
+        });
+        courtNumber += 1;
+      }
+    }
+
+    return matches;
   }
 
   private buildTournamentGroups(
@@ -1406,6 +1423,15 @@ export class TournamentsService {
     return LEGACY_STAGE_RANK[stage] ?? 500;
   }
 
+  private getGameNumber(stage: string) {
+    if (!stage.startsWith(GAME_STAGE_PREFIX)) {
+      return null;
+    }
+
+    const number = Number(stage.replace(GAME_STAGE_PREFIX, ''));
+    return Number.isFinite(number) ? number : null;
+  }
+
   private getStageLabel(stage: string) {
     if (stage === FINAL_STAGE) {
       return 'Final';
@@ -1422,21 +1448,38 @@ export class TournamentsService {
   private async rebuildTournamentFinal(
     tx: Prisma.TransactionClient,
     matches: TournamentMatchRecord[],
+    tournament: {
+      id: string;
+      startsAt: Date;
+    },
   ) {
     const finalMatch = matches.find((match) => match.stage === FINAL_STAGE);
-
-    if (!finalMatch) {
-      return;
-    }
-
     const gameMatches = matches.filter((match) =>
       match.stage.startsWith(GAME_STAGE_PREFIX),
+    );
+    const completedGameNumbers = new Set(
+      gameMatches
+        .filter((match) => match.status === TournamentMatchStatus.FINISHED)
+        .map((match) => this.getGameNumber(match.stage))
+        .filter((value): value is number => value != null),
+    );
+    const allGamesExist = Array.from(
+      { length: TOURNAMENT_GAME_COUNT },
+      (_, index) => index + 1,
+    ).every((gameNumber) =>
+      gameMatches.some(
+        (match) => match.stage === `${GAME_STAGE_PREFIX}${gameNumber}`,
+      ),
     );
     const allGamesFinished = gameMatches.every(
       (match) => match.status === TournamentMatchStatus.FINISHED,
     );
 
-    if (!allGamesFinished) {
+    if (
+      !allGamesExist ||
+      completedGameNumbers.size < TOURNAMENT_GAME_COUNT ||
+      !allGamesFinished
+    ) {
       return;
     }
 
@@ -1493,6 +1536,28 @@ export class TournamentsService {
 
     const desiredTeamOne = finalists[0];
     const desiredTeamTwo = finalists[1];
+
+    if (!finalMatch) {
+      await tx.tournamentMatch.create({
+        data: {
+          tournamentId: tournament.id,
+          stage: FINAL_STAGE,
+          matchNumber: 1,
+          courtLabel: 'CANCHA 1',
+          scheduledAt: new Date(
+            tournament.startsAt.getTime() +
+              TOURNAMENT_GAME_COUNT * 25 * 60 * 1000,
+          ),
+          teamOneLabel: desiredTeamOne,
+          teamTwoLabel: desiredTeamTwo,
+          status: TournamentMatchStatus.PENDING,
+          score: null,
+          winnerLabel: null,
+        },
+      });
+      return;
+    }
+
     const teamLabelsChanged =
       finalMatch.teamOneLabel !== desiredTeamOne ||
       finalMatch.teamTwoLabel !== desiredTeamTwo;
@@ -1537,6 +1602,40 @@ export class TournamentsService {
     tx: Prisma.TransactionClient,
     tournamentId: string,
   ) {
+    const tournament = await tx.tournament.findUnique({
+      where: { id: tournamentId },
+      include: {
+        registrations: {
+          where: {
+            status: TournamentRegistrationStatus.CONFIRMED,
+            mode: TournamentRegistrationMode.WITH_PARTNER,
+            partnerUserId: {
+              not: null,
+            },
+          },
+          include: {
+            user: {
+              select: {
+                name: true,
+              },
+            },
+            partnerUser: {
+              select: {
+                name: true,
+              },
+            },
+          },
+          orderBy: {
+            createdAt: 'asc',
+          },
+        },
+      },
+    });
+
+    if (!tournament) {
+      return;
+    }
+
     const matches = await tx.tournamentMatch.findMany({
       where: { tournamentId },
       orderBy: [{ matchNumber: 'asc' }],
@@ -1553,7 +1652,51 @@ export class TournamentsService {
     );
 
     if (stages.some((stage) => stage.startsWith(GAME_STAGE_PREFIX))) {
-      await this.rebuildTournamentFinal(tx, matches);
+      const generatedGameNumbers = stages
+        .map((stage) => this.getGameNumber(stage))
+        .filter((value): value is number => value != null)
+        .sort((left, right) => left - right);
+      const currentGameNumber = generatedGameNumbers.at(-1);
+
+      if (currentGameNumber != null) {
+        const currentStage = `${GAME_STAGE_PREFIX}${currentGameNumber}`;
+        const currentStageMatches = matches.filter(
+          (match) => match.stage === currentStage,
+        );
+        const currentStageFinished =
+          currentStageMatches.length > 0 &&
+          currentStageMatches.every(
+            (match) => match.status === TournamentMatchStatus.FINISHED,
+          );
+
+        if (currentStageFinished && currentGameNumber < TOURNAMENT_GAME_COUNT) {
+          const nextGameNumber = currentGameNumber + 1;
+          const nextStage = `${GAME_STAGE_PREFIX}${nextGameNumber}`;
+          const nextStageExists = matches.some(
+            (match) => match.stage === nextStage,
+          );
+
+          if (!nextStageExists) {
+            const pairings = tournament.registrations.map((registration) => ({
+              teamLabel: `${registration.user.name} / ${registration.partnerUser!.name}`,
+            }));
+
+            await tx.tournamentMatch.createMany({
+              data: this.buildGameMatches(
+                tournament.id,
+                tournament.startsAt,
+                pairings,
+                tournament.playerCapacity,
+                tournament.format,
+                nextGameNumber,
+              ),
+            });
+            return;
+          }
+        }
+      }
+
+      await this.rebuildTournamentFinal(tx, matches, tournament);
       return;
     }
 
