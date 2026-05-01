@@ -54,6 +54,13 @@ enum TournamentMatchStatus {
   FINISHED
 }
 
+enum FriendshipStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
+  BLOCKED
+}
+
 model User {
   id                               String                   @id @default(uuid())
   name                             String
@@ -68,6 +75,10 @@ model User {
   matchParticipations              MatchParticipant[]
   tournamentRegistrations          TournamentRegistration[] @relation("TournamentRegistrant")
   partneredTournamentRegistrations TournamentRegistration[] @relation("TournamentPartner")
+  sentFriendships                  Friendship[]             @relation("FriendshipRequester")
+  receivedFriendships              Friendship[]             @relation("FriendshipAddressee")
+  userAFriendships                 Friendship[]             @relation("FriendshipUserA")
+  userBFriendships                 Friendship[]             @relation("FriendshipUserB")
 
   @@map("users")
 }
@@ -94,6 +105,29 @@ model Profile {
   updatedAt                DateTime         @updatedAt @map("updated_at")
 
   @@map("profiles")
+}
+
+model Friendship {
+  id          String           @id @default(uuid())
+  requesterId String           @map("requester_id")
+  addresseeId String           @map("addressee_id")
+  userAId     String           @map("user_a_id")
+  userBId     String           @map("user_b_id")
+  status      FriendshipStatus @default(PENDING)
+  createdAt   DateTime         @default(now()) @map("created_at")
+  updatedAt   DateTime         @updatedAt @map("updated_at")
+
+  requester User @relation("FriendshipRequester", fields: [requesterId], references: [id], onDelete: Cascade)
+  addressee User @relation("FriendshipAddressee", fields: [addresseeId], references: [id], onDelete: Cascade)
+  userA     User @relation("FriendshipUserA", fields: [userAId], references: [id], onDelete: Cascade)
+  userB     User @relation("FriendshipUserB", fields: [userBId], references: [id], onDelete: Cascade)
+
+  @@unique([userAId, userBId])
+  @@index([requesterId, status])
+  @@index([addresseeId, status])
+  @@index([userAId])
+  @@index([userBId])
+  @@map("friendships")
 }
 
 model Match {

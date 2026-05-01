@@ -1,5 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import {
+  FriendshipStatus,
   MatchParticipant,
   MatchStatus,
   Prisma,
@@ -64,9 +65,7 @@ export class ProfileService {
     const wins = profile.wins;
     const losses = history.filter((item) => item.result === 'LOSS').length;
     const winRate =
-      matchesPlayed > 0
-        ? Number(((wins / matchesPlayed) * 100).toFixed(2))
-        : 0;
+      matchesPlayed > 0 ? Number(((wins / matchesPlayed) * 100).toFixed(2)) : 0;
 
     return {
       matchesPlayed,
@@ -121,20 +120,24 @@ export class ProfileService {
 
     const profile = await this.ensureProfile(user);
 
-    const [matchesPlayed, recentHistory] = await Promise.all([
+    const [matchesPlayed, recentHistory, friendsCount] = await Promise.all([
       this.prisma.matchParticipant.count({
         where: {
           userId: user.id,
         },
       }),
       this.getMatchHistory(user.id, 10),
+      this.prisma.friendship.count({
+        where: {
+          status: FriendshipStatus.ACCEPTED,
+          OR: [{ userAId: user.id }, { userBId: user.id }],
+        },
+      }),
     ]);
 
     const wins = profile.wins;
     const winRate =
-      matchesPlayed > 0
-        ? Number(((wins / matchesPlayed) * 100).toFixed(2))
-        : 0;
+      matchesPlayed > 0 ? Number(((wins / matchesPlayed) * 100).toFixed(2)) : 0;
 
     return {
       id: user.id,
@@ -152,7 +155,7 @@ export class ProfileService {
       wins,
       winRate,
       weeklyStreak: profile.weeklyStreak,
-      friendsCount: profile.friendsCount,
+      friendsCount,
       followersCount: profile.followersCount,
       followingCount: profile.followingCount,
       socialNotificationsCount: profile.socialNotificationsCount,

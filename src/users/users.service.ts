@@ -1,10 +1,14 @@
 import { Injectable } from '@nestjs/common';
 import { Prisma, User } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { SocialService } from '../social/social.service';
 
 @Injectable()
 export class UsersService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly socialService: SocialService,
+  ) {}
 
   findByEmail(email: string): Promise<User | null> {
     return this.prisma.user.findUnique({
@@ -98,13 +102,25 @@ export class UsersService {
       }
     }
 
-    return suggestions;
+    const statuses = await this.socialService.getConnectionStatus(
+      currentUserId,
+      suggestions.map((user) => user.id),
+    );
+
+    return suggestions.map((user) => {
+      const connection = statuses.get(user.id);
+      return {
+        ...user,
+        friendshipId: connection?.id ?? null,
+        friendshipStatus: connection?.status ?? null,
+      };
+    });
   }
 
-  searchCommunity(currentUserId: string, query: string) {
+  async searchCommunity(currentUserId: string, query: string) {
     const search = query.trim();
 
-    return this.prisma.user.findMany({
+    const users = await this.prisma.user.findMany({
       where: {
         id: { not: currentUserId },
         OR: [
@@ -140,6 +156,20 @@ export class UsersService {
       },
       orderBy: [{ name: 'asc' }],
       take: 20,
+    });
+
+    const statuses = await this.socialService.getConnectionStatus(
+      currentUserId,
+      users.map((user) => user.id),
+    );
+
+    return users.map((user) => {
+      const connection = statuses.get(user.id);
+      return {
+        ...user,
+        friendshipId: connection?.id ?? null,
+        friendshipStatus: connection?.status ?? null,
+      };
     });
   }
 }
