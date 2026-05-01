@@ -68,45 +68,52 @@ export class NotificationsService {
       return { sent: 0, skipped: false };
     }
 
-    const response = await getMessaging(this.firebaseApp).sendEachForMulticast({
-      tokens: devices.map((device) => device.token),
-      notification: {
-        title: payload.title,
-        body: payload.body,
-      },
-      data: payload.data ?? {},
-      android: {
-        priority: 'high',
+    try {
+      const response = await getMessaging(
+        this.firebaseApp,
+      ).sendEachForMulticast({
+        tokens: devices.map((device) => device.token),
         notification: {
-          channelId: 'pgo_default',
-          sound: 'default',
+          title: payload.title,
+          body: payload.body,
         },
-      },
-    });
-
-    const invalidTokens = response.responses
-      .map((item, index) => ({
-        token: devices[index].token,
-        error: item.error?.code,
-      }))
-      .filter((item) =>
-        [
-          'messaging/invalid-registration-token',
-          'messaging/registration-token-not-registered',
-        ].includes(item.error ?? ''),
-      )
-      .map((item) => item.token);
-
-    if (invalidTokens.length > 0) {
-      await this.prisma.pushDeviceToken.deleteMany({
-        where: { token: { in: invalidTokens } },
+        data: payload.data ?? {},
+        android: {
+          priority: 'high',
+          notification: {
+            channelId: 'pgo_default',
+            sound: 'default',
+          },
+        },
       });
-    }
 
-    return {
-      sent: response.successCount,
-      failed: response.failureCount,
-    };
+      const invalidTokens = response.responses
+        .map((item, index) => ({
+          token: devices[index].token,
+          error: item.error?.code,
+        }))
+        .filter((item) =>
+          [
+            'messaging/invalid-registration-token',
+            'messaging/registration-token-not-registered',
+          ].includes(item.error ?? ''),
+        )
+        .map((item) => item.token);
+
+      if (invalidTokens.length > 0) {
+        await this.prisma.pushDeviceToken.deleteMany({
+          where: { token: { in: invalidTokens } },
+        });
+      }
+
+      return {
+        sent: response.successCount,
+        failed: response.failureCount,
+      };
+    } catch (error) {
+      this.logger.error('No se pudo enviar push por Firebase', error);
+      return { sent: 0, failed: devices.length };
+    }
   }
 
   private createFirebaseApp() {

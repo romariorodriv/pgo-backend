@@ -11,6 +11,7 @@ import {
   TournamentRegistrationStatus,
   TournamentStatus,
 } from '@prisma/client';
+import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { UpdateTournamentDto } from './dto/update-tournament.dto';
 
@@ -83,7 +84,10 @@ const LEGACY_STAGE_RANK: Record<string, number> = {
 
 @Injectable()
 export class TournamentsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly notificationsService: NotificationsService,
+  ) {}
 
   async create(
     createdById: string,
@@ -388,6 +392,8 @@ export class TournamentsService {
       data: bracketMatches,
     });
 
+    await this.notifyTournamentBracketReady(tournament);
+
     return this.getAdminBracket(tournamentId, userId);
   }
 
@@ -410,6 +416,8 @@ export class TournamentsService {
         data: bracketMatches,
       });
     });
+
+    await this.notifyTournamentBracketReady(tournament);
 
     return this.getAdminBracket(tournamentId, userId);
   }
@@ -908,9 +916,15 @@ export class TournamentsService {
     const [registration, partnerRegistration] = await Promise.all([
       this.prisma.tournamentRegistration.findFirst({
         where: { id: registrationId, tournamentId },
+        include: {
+          user: { select: { id: true, name: true } },
+        },
       }),
       this.prisma.tournamentRegistration.findFirst({
         where: { id: partnerRegistrationId, tournamentId },
+        include: {
+          user: { select: { id: true, name: true } },
+        },
       }),
     ]);
 
@@ -952,6 +966,12 @@ export class TournamentsService {
         },
       });
     });
+
+    await this.notifyTournamentPairingCreated(
+      tournamentId,
+      registration.user,
+      partnerRegistration.user,
+    );
 
     return this.findOne(tournamentId);
   }
@@ -1251,6 +1271,70 @@ export class TournamentsService {
       teamLabels.has(match.teamOneLabel.trim()) ||
       teamLabels.has(match.teamTwoLabel.trim())
     );
+  }
+
+  private async notifyTournamentBracketReady(tournament: {
+    id: string;
+    title: string;
+    startsAt: Date;
+    location: string;
+    registrations: Array<{
+      userId: string;
+      partnerUserId: string | null;
+      status: TournamentRegistrationStatus;
+    }>;
+  }) {
+    const recipientIds = new Set<string>();
+
+    for (const registration of tournament.registrations) {
+      if (registration.status !== TournamentRegistrationStatus.CONFIRMED) {
+        continue;
+      }
+      recipientIds.add(registration.userId);
+      if (registration.partnerUserId) {
+        recipientIds.add(registration.partnerUserId);
+      }
+    }
+
+    await Promise.all(
+      [...recipientIds].map((userId) =>
+        this.notificationsService.sendToUser(userId, {
+          title: 'Tu torneo ya tiene cruces',
+          body: `${tournament.title} ya empezo. Revisa tu proximo partido.`,
+          data: {
+            type: 'tournament_bracket_ready',
+            tournamentId: tournament.id,
+          },
+        }),
+      ),
+    );
+  }
+
+  private async notifyTournamentPairingCreated(
+    tournamentId: string,
+    user: { id: string; name: string },
+    partner: { id: string; name: string },
+  ) {
+    await Promise.all([
+      this.notificationsService.sendToUser(user.id, {
+        title: 'Te encontramos dupla',
+        body: `${partner.name} sera tu dupla para el torneo.`,
+        data: {
+          type: 'tournament_pairing_created',
+          tournamentId,
+          partnerId: partner.id,
+        },
+      }),
+      this.notificationsService.sendToUser(partner.id, {
+        title: 'Te encontramos dupla',
+        body: `${user.name} sera tu dupla para el torneo.`,
+        data: {
+          type: 'tournament_pairing_created',
+          tournamentId,
+          partnerId: user.id,
+        },
+      }),
+    ]);
   }
 
   private buildTournamentAlert(
