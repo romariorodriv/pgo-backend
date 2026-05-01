@@ -5,6 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { Friendship, FriendshipStatus, Prisma } from '@prisma/client';
+import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
 
 type FriendshipWithUsers = Friendship & {
@@ -42,7 +43,10 @@ const socialUserSelect = {
 
 @Injectable()
 export class SocialService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly notificationsService: NotificationsService,
+  ) {}
 
   async listFriends(userId: string) {
     const friendships = await this.prisma.friendship.findMany({
@@ -121,6 +125,8 @@ export class SocialService {
         include: this.friendshipInclude(),
       });
 
+      await this.notifyFriendRequest(created);
+
       return this.formatConnection(created, requesterId);
     }
 
@@ -157,6 +163,8 @@ export class SocialService {
       },
       include: this.friendshipInclude(),
     });
+
+    await this.notifyFriendRequest(updated);
 
     return this.formatConnection(updated, requesterId);
   }
@@ -393,6 +401,18 @@ export class SocialService {
       userA: { select: socialUserSelect },
       userB: { select: socialUserSelect },
     };
+  }
+
+  private async notifyFriendRequest(friendship: FriendshipWithUsers) {
+    await this.notificationsService.sendToUser(friendship.addresseeId, {
+      title: 'Nueva solicitud de amistad',
+      body: `${friendship.requester.name} quiere agregarte como amigo`,
+      data: {
+        type: 'friend_request',
+        friendshipId: friendship.id,
+        requesterId: friendship.requesterId,
+      },
+    });
   }
 
   private async adjustFriendCounters(

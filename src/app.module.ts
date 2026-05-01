@@ -8,6 +8,7 @@ import { UsersModule } from './users/users.module';
 import { AuthModule } from './auth/auth.module';
 import { MatchesModule } from './matches/matches.module';
 import { ProfileModule } from './profile/profile.module';
+import { NotificationsModule } from './notifications/notifications.module';
 import { SocialModule } from './social/social.module';
 import { TournamentsModule } from './tournaments/tournaments.module';
 
@@ -21,6 +22,7 @@ import { TournamentsModule } from './tournaments/tournaments.module';
     AuthModule,
     MatchesModule,
     ProfileModule,
+    NotificationsModule,
     SocialModule,
     TournamentsModule,
   ],

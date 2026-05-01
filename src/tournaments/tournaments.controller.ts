@@ -77,6 +77,15 @@ export class TournamentsController {
     return this.tournamentsService.getPublicMatches(id);
   }
 
+  @UseGuards(JwtAuthGuard)
+  @Get(':id/my-matches')
+  getMyTournamentMatches(
+    @Param('id') id: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.tournamentsService.getParticipantMatches(id, user.id);
+  }
+
   @Get(':id/bracket')
   getPublicBracket(@Param('id') id: string) {
     return this.tournamentsService.getPublicBracket(id);
@@ -128,6 +137,33 @@ export class TournamentsController {
     @CurrentUser() user: AuthenticatedUser,
   ) {
     return this.tournamentsService.startAdminMatch(id, matchId, user.id);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Patch(':id/matches/:matchId/start')
+  startParticipantMatch(
+    @Param('id') id: string,
+    @Param('matchId') matchId: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.tournamentsService.startParticipantMatch(id, matchId, user.id);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Patch(':id/matches/:matchId/finish')
+  finishParticipantMatch(
+    @Param('id') id: string,
+    @Param('matchId') matchId: string,
+    @Body() body: UpdateTournamentMatchDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.tournamentsService.finishParticipantMatch(
+      id,
+      matchId,
+      user.id,
+      body.winnerLabel,
+      body.score,
+    );
   }
 
   @UseGuards(JwtAuthGuard)

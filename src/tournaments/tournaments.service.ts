@@ -289,6 +289,25 @@ export class TournamentsService {
     };
   }
 
+  async getParticipantMatches(tournamentId: string, userId: string) {
+    const tournament = await this.ensureTournamentExists(tournamentId);
+    const matches = await this.getPersistedMatches(tournamentId);
+    const teamLabels = await this.getParticipantTeamLabels(
+      tournamentId,
+      userId,
+    );
+
+    return {
+      tournament: this.mapAdminTournament(tournament),
+      summary: this.buildSummary(matches),
+      matches: matches.map((match) =>
+        this.mapTournamentMatch(match, {
+          canManage: this.isUserMatch(match, teamLabels),
+        }),
+      ),
+    };
+  }
+
   async getPublicBracket(tournamentId: string) {
     const tournament = await this.ensureTournamentExists(tournamentId);
     const matches = await this.getPersistedMatches(tournamentId);
@@ -397,6 +416,30 @@ export class TournamentsService {
 
   async deleteBracket(tournamentId: string, userId: string) {
     await this.ensureTournamentOwnership(tournamentId, userId);
+
+    const startedMatches = await this.prisma.tournamentMatch.count({
+      where: {
+        tournamentId,
+        OR: [
+          {
+            status: {
+              not: TournamentMatchStatus.PENDING,
+            },
+          },
+          {
+            startedAt: {
+              not: null,
+            },
+          },
+        ],
+      },
+    });
+
+    if (startedMatches > 0) {
+      throw new BadRequestException(
+        'No puedes eliminar cruces porque el torneo ya tiene partidos iniciados',
+      );
+    }
 
     const result = await this.prisma.tournamentMatch.deleteMany({
       where: { tournamentId },
@@ -523,6 +566,44 @@ export class TournamentsService {
     return this.mapTournamentMatch(updated);
   }
 
+  async startParticipantMatch(
+    tournamentId: string,
+    matchId: string,
+    userId: string,
+  ) {
+    const match = await this.ensureParticipantCanManageMatch(
+      tournamentId,
+      matchId,
+      userId,
+    );
+
+    if (match.status !== TournamentMatchStatus.PENDING) {
+      throw new BadRequestException('Solo puedes iniciar partidos pendientes');
+    }
+
+    if (
+      !match.teamOneLabel ||
+      !match.teamTwoLabel ||
+      match.teamOneLabel === 'TBD' ||
+      match.teamTwoLabel === 'TBD'
+    ) {
+      throw new BadRequestException(
+        'Este partido aun no tiene dos duplas listas para iniciar',
+      );
+    }
+
+    const updated = await this.prisma.tournamentMatch.update({
+      where: { id: match.id },
+      data: {
+        status: TournamentMatchStatus.LIVE,
+        startedAt: new Date(),
+        score: match.score ?? '0-0',
+      },
+    });
+
+    return this.mapTournamentMatch(updated, { canManage: true });
+  }
+
   async finishAdminMatch(
     tournamentId: string,
     matchId: string,
@@ -549,6 +630,48 @@ export class TournamentsService {
     });
 
     return this.mapTournamentMatch(updated);
+  }
+
+  async finishParticipantMatch(
+    tournamentId: string,
+    matchId: string,
+    userId: string,
+    winnerLabel: string,
+    score?: string,
+  ) {
+    const match = await this.ensureParticipantCanManageMatch(
+      tournamentId,
+      matchId,
+      userId,
+    );
+    this.ensureValidWinner(match, winnerLabel);
+
+    if (match.status !== TournamentMatchStatus.LIVE) {
+      throw new BadRequestException(
+        'Primero debes iniciar tu partido para registrar el resultado',
+      );
+    }
+
+    const trimmedScore = score?.trim();
+    if (!trimmedScore) {
+      throw new BadRequestException('Ingresa el puntaje final del partido');
+    }
+
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const finishedMatch = await tx.tournamentMatch.update({
+        where: { id: match.id },
+        data: {
+          status: TournamentMatchStatus.FINISHED,
+          winnerLabel,
+          score: trimmedScore,
+        },
+      });
+
+      await this.rebuildNextRounds(tx, tournamentId);
+      return finishedMatch;
+    });
+
+    return this.mapTournamentMatch(updated, { canManage: true });
   }
 
   async correctAdminMatchResult(
@@ -1058,7 +1181,10 @@ export class TournamentsService {
     };
   }
 
-  private mapTournamentMatch(match: TournamentMatchRecord) {
+  private mapTournamentMatch(
+    match: TournamentMatchRecord,
+    options?: { canManage?: boolean },
+  ) {
     return {
       id: match.id,
       courtLabel: match.courtLabel,
@@ -1070,7 +1196,61 @@ export class TournamentsService {
       status: match.status,
       score: match.score,
       winnerLabel: match.winnerLabel,
+      canManage: options?.canManage ?? false,
     };
+  }
+
+  private async ensureParticipantCanManageMatch(
+    tournamentId: string,
+    matchId: string,
+    userId: string,
+  ) {
+    const match = await this.ensureTournamentMatch(tournamentId, matchId);
+    const teamLabels = await this.getParticipantTeamLabels(
+      tournamentId,
+      userId,
+    );
+
+    if (!this.isUserMatch(match, teamLabels)) {
+      throw new BadRequestException(
+        'Solo puedes gestionar el partido en el que participas',
+      );
+    }
+
+    return match;
+  }
+
+  private async getParticipantTeamLabels(tournamentId: string, userId: string) {
+    const registrations = await this.prisma.tournamentRegistration.findMany({
+      where: {
+        tournamentId,
+        status: TournamentRegistrationStatus.CONFIRMED,
+        OR: [{ userId }, { partnerUserId: userId }],
+      },
+      include: {
+        user: {
+          select: { name: true },
+        },
+        partnerUser: {
+          select: { name: true },
+        },
+      },
+    });
+
+    return new Set(
+      registrations
+        .filter((registration) => registration.partnerUser != null)
+        .map((registration) =>
+          `${registration.user.name} / ${registration.partnerUser!.name}`.trim(),
+        ),
+    );
+  }
+
+  private isUserMatch(match: TournamentMatchRecord, teamLabels: Set<string>) {
+    return (
+      teamLabels.has(match.teamOneLabel.trim()) ||
+      teamLabels.has(match.teamTwoLabel.trim())
+    );
   }
 
   private buildTournamentAlert(

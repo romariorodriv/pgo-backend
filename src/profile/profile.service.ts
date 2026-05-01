@@ -120,7 +120,12 @@ export class ProfileService {
 
     const profile = await this.ensureProfile(user);
 
-    const [matchesPlayed, recentHistory, friendsCount] = await Promise.all([
+    const [
+      matchesPlayed,
+      recentHistory,
+      friendsCount,
+      socialNotificationsCount,
+    ] = await Promise.all([
       this.prisma.matchParticipant.count({
         where: {
           userId: user.id,
@@ -131,6 +136,12 @@ export class ProfileService {
         where: {
           status: FriendshipStatus.ACCEPTED,
           OR: [{ userAId: user.id }, { userBId: user.id }],
+        },
+      }),
+      this.prisma.friendship.count({
+        where: {
+          addresseeId: user.id,
+          status: FriendshipStatus.PENDING,
         },
       }),
     ]);
@@ -158,7 +169,7 @@ export class ProfileService {
       friendsCount,
       followersCount: profile.followersCount,
       followingCount: profile.followingCount,
-      socialNotificationsCount: profile.socialNotificationsCount,
+      socialNotificationsCount,
       isCurrentUser: user.id === viewerUserId,
       matchHistory: recentHistory,
     };

@@ -79,8 +79,24 @@ model User {
   receivedFriendships              Friendship[]             @relation("FriendshipAddressee")
   userAFriendships                 Friendship[]             @relation("FriendshipUserA")
   userBFriendships                 Friendship[]             @relation("FriendshipUserB")
+  pushDeviceTokens                 PushDeviceToken[]
 
   @@map("users")
+}
+
+model PushDeviceToken {
+  id         String   @id @default(uuid())
+  userId     String   @map("user_id")
+  token      String   @unique
+  platform   String
+  lastSeenAt DateTime @default(now()) @map("last_seen_at")
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("push_device_tokens")
 }
 
 model Profile {
