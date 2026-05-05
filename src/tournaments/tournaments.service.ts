@@ -950,6 +950,19 @@ export class TournamentsService {
     }
 
     await this.prisma.$transaction(async (tx) => {
+      await tx.tournamentRegistration.deleteMany({
+        where: {
+          tournamentId,
+          status: TournamentRegistrationStatus.CANCELED,
+          OR: [
+            { userId: registration.userId },
+            { userId: partnerRegistration.userId },
+            { partnerUserId: registration.userId },
+            { partnerUserId: partnerRegistration.userId },
+          ],
+        },
+      });
+
       await tx.tournamentRegistration.update({
         where: { id: registration.id },
         data: {
@@ -976,6 +989,117 @@ export class TournamentsService {
     return this.findOne(tournamentId);
   }
 
+  async addAdminRegistration(
+    tournamentId: string,
+    userId: string,
+    adminUserId: string,
+    partnerUserId?: string,
+  ) {
+    if (partnerUserId && userId === partnerUserId) {
+      throw new BadRequestException(
+        'No puedes inscribir a un jugador consigo mismo',
+      );
+    }
+
+    await this.ensureTournamentOwnership(tournamentId, adminUserId);
+    await this.ensureAdminCanManageRegistrations(tournamentId);
+
+    const userIds = partnerUserId ? [userId, partnerUserId] : [userId];
+    const users = await this.prisma.user.findMany({
+      where: {
+        id: {
+          in: userIds,
+        },
+      },
+      select: {
+        id: true,
+      },
+    });
+
+    if (users.length !== userIds.length) {
+      throw new NotFoundException('Jugador no encontrado');
+    }
+
+    const activeRegistrations =
+      await this.prisma.tournamentRegistration.findMany({
+        where: {
+          tournamentId,
+          status: {
+            not: TournamentRegistrationStatus.CANCELED,
+          },
+          OR: [
+            {
+              userId: {
+                in: userIds,
+              },
+            },
+            {
+              partnerUserId: {
+                in: userIds,
+              },
+            },
+          ],
+        },
+        select: {
+          id: true,
+        },
+      });
+
+    if (activeRegistrations.length > 0) {
+      throw new ConflictException(
+        'Uno de los jugadores ya esta inscrito en este torneo',
+      );
+    }
+
+    const activePlayers = await this.getActiveTournamentPlayerIds(tournamentId);
+    const availableSlots = await this.getTournamentAvailableSlots(
+      tournamentId,
+      activePlayers.size,
+    );
+    if (availableSlots < userIds.length) {
+      throw new BadRequestException(
+        'No hay cupos suficientes para agregar esa inscripcion',
+      );
+    }
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.tournamentRegistration.deleteMany({
+        where: {
+          tournamentId,
+          status: TournamentRegistrationStatus.CANCELED,
+          OR: [
+            {
+              userId: {
+                in: userIds,
+              },
+            },
+            {
+              partnerUserId: {
+                in: userIds,
+              },
+            },
+          ],
+        },
+      });
+
+      await tx.tournamentRegistration.create({
+        data: {
+          tournamentId,
+          userId,
+          partnerUserId: partnerUserId ?? null,
+          mode: partnerUserId
+            ? TournamentRegistrationMode.WITH_PARTNER
+            : TournamentRegistrationMode.SOLO,
+          status: partnerUserId
+            ? TournamentRegistrationStatus.CONFIRMED
+            : TournamentRegistrationStatus.PENDING,
+        },
+      });
+    });
+
+    return this.findOne(tournamentId);
+  }
+
   async removeAdminRegistration(
     tournamentId: string,
     registrationId: string,
@@ -992,18 +1116,33 @@ export class TournamentsService {
           not: TournamentRegistrationStatus.CANCELED,
         },
       },
+      include: {
+        user: { select: { id: true, name: true } },
+        partnerUser: { select: { id: true, name: true } },
+        tournament: { select: { id: true, title: true } },
+      },
     });
 
     if (!registration) {
       throw new NotFoundException('Inscripcion no encontrada');
     }
 
-    await this.prisma.tournamentRegistration.update({
-      where: { id: registration.id },
-      data: {
-        status: TournamentRegistrationStatus.CANCELED,
-      },
+    await this.prisma.$transaction(async (tx) => {
+      await tx.tournamentRegistration.update({
+        where: { id: registration.id },
+        data: {
+          status: TournamentRegistrationStatus.CANCELED,
+        },
+      });
     });
+
+    if (registration.partnerUser) {
+      await this.notifyTournamentPairingCanceled(
+        registration.tournament,
+        registration.user,
+        registration.partnerUser,
+      );
+    }
 
     return this.findOne(tournamentId);
   }
@@ -1165,10 +1304,12 @@ export class TournamentsService {
       where: { id: tournamentId },
       select: {
         id: true,
-        registrationsOpen: true,
         matches: {
-          select: { id: true },
-          take: 1,
+          select: {
+            id: true,
+            status: true,
+            startedAt: true,
+          },
         },
       },
     });
@@ -1177,17 +1318,66 @@ export class TournamentsService {
       throw new NotFoundException('Torneo no encontrado');
     }
 
-    if (!tournament.registrationsOpen) {
+    const startedMatch = tournament.matches.some(
+      (match) =>
+        match.status !== TournamentMatchStatus.PENDING ||
+        match.startedAt != null,
+    );
+
+    if (startedMatch) {
       throw new BadRequestException(
-        'No puedes modificar inscritos con las inscripciones cerradas',
+        'No puedes modificar inscritos porque el torneo ya tiene partidos iniciados',
       );
     }
 
     if (tournament.matches.length > 0) {
       throw new BadRequestException(
-        'No puedes modificar inscritos despues de generar cruces',
+        'Primero elimina los cruces pendientes para modificar inscritos',
       );
     }
+  }
+
+  private async getActiveTournamentPlayerIds(tournamentId: string) {
+    const registrations = await this.prisma.tournamentRegistration.findMany({
+      where: {
+        tournamentId,
+        status: {
+          not: TournamentRegistrationStatus.CANCELED,
+        },
+      },
+      select: {
+        userId: true,
+        partnerUserId: true,
+      },
+    });
+
+    const playerIds = new Set<string>();
+    for (const registration of registrations) {
+      playerIds.add(registration.userId);
+      if (registration.partnerUserId) {
+        playerIds.add(registration.partnerUserId);
+      }
+    }
+
+    return playerIds;
+  }
+
+  private async getTournamentAvailableSlots(
+    tournamentId: string,
+    activePlayersCount: number,
+  ) {
+    const tournament = await this.prisma.tournament.findUnique({
+      where: { id: tournamentId },
+      select: {
+        playerCapacity: true,
+      },
+    });
+
+    if (!tournament) {
+      throw new NotFoundException('Torneo no encontrado');
+    }
+
+    return tournament.playerCapacity - activePlayersCount;
   }
 
   private mapAdminTournament(tournament: AdminTournamentSelect) {
@@ -1317,20 +1507,87 @@ export class TournamentsService {
   ) {
     await Promise.all([
       this.notificationsService.sendToUser(user.id, {
-        title: 'Te encontramos dupla',
-        body: `${partner.name} sera tu dupla para el torneo.`,
+        title: '🎉 ¡Te encontramos dupla!',
+        body: 'Completa tu inscripción para asegurar tu cupo',
         data: {
           type: 'tournament_pairing_created',
           tournamentId,
           partnerId: partner.id,
+          action: 'confirm_registration',
         },
       }),
       this.notificationsService.sendToUser(partner.id, {
-        title: 'Te encontramos dupla',
-        body: `${user.name} sera tu dupla para el torneo.`,
+        title: '🎉 ¡Te encontramos dupla!',
+        body: 'Completa tu inscripción para asegurar tu cupo',
         data: {
           type: 'tournament_pairing_created',
           tournamentId,
+          partnerId: user.id,
+          action: 'confirm_registration',
+        },
+      }),
+    ]);
+
+    this.scheduleTournamentPairingReminder(tournamentId, user, partner);
+  }
+
+  private scheduleTournamentPairingReminder(
+    tournamentId: string,
+    user: { id: string; name: string },
+    partner: { id: string; name: string },
+  ) {
+    const reminder = setTimeout(
+      () => {
+        void Promise.all([
+          this.notificationsService.sendToUser(user.id, {
+            title: '⏳ Tu dupla está esperando',
+            body: 'Confirma antes de perder el cupo',
+            data: {
+              type: 'tournament_pairing_reminder',
+              tournamentId,
+              partnerId: partner.id,
+              action: 'confirm_registration',
+            },
+          }),
+          this.notificationsService.sendToUser(partner.id, {
+            title: '⏳ Tu dupla está esperando',
+            body: 'Confirma antes de perder el cupo',
+            data: {
+              type: 'tournament_pairing_reminder',
+              tournamentId,
+              partnerId: user.id,
+              action: 'confirm_registration',
+            },
+          }),
+        ]);
+      },
+      30 * 60 * 1000,
+    );
+
+    reminder.unref?.();
+  }
+
+  private async notifyTournamentPairingCanceled(
+    tournament: { id: string; title: string },
+    user: { id: string; name: string },
+    partner: { id: string; name: string },
+  ) {
+    await Promise.all([
+      this.notificationsService.sendToUser(user.id, {
+        title: '⚠️ Tu pareja ya no está disponible',
+        body: 'Buscando nueva dupla',
+        data: {
+          type: 'tournament_pairing_canceled',
+          tournamentId: tournament.id,
+          partnerId: partner.id,
+        },
+      }),
+      this.notificationsService.sendToUser(partner.id, {
+        title: '⚠️ Tu pareja ya no está disponible',
+        body: 'Buscando nueva dupla',
+        data: {
+          type: 'tournament_pairing_canceled',
+          tournamentId: tournament.id,
           partnerId: user.id,
         },
       }),

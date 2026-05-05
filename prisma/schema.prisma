@@ -61,6 +61,12 @@ enum FriendshipStatus {
   BLOCKED
 }
 
+enum OpenMatchAlertStatus {
+  OPEN
+  FULL
+  CANCELED
+}
+
 model User {
   id                               String                   @id @default(uuid())
   name                             String
@@ -80,6 +86,8 @@ model User {
   userAFriendships                 Friendship[]             @relation("FriendshipUserA")
   userBFriendships                 Friendship[]             @relation("FriendshipUserB")
   pushDeviceTokens                 PushDeviceToken[]
+  organizedOpenMatchAlerts         OpenMatchAlert[]         @relation("OpenMatchOrganizer")
+  openMatchJoins                   OpenMatchParticipant[]
 
   @@map("users")
 }
@@ -179,6 +187,43 @@ model MatchParticipant {
   @@unique([matchId, slot])
   @@unique([matchId, userId])
   @@map("match_participants")
+}
+
+model OpenMatchAlert {
+  id               String                 @id @default(uuid())
+  organizerId      String                 @map("organizer_id")
+  organizer        User                   @relation("OpenMatchOrganizer", fields: [organizerId], references: [id], onDelete: Cascade)
+  category         String
+  format           String
+  startsAt         DateTime               @map("starts_at")
+  club             String
+  district         String
+  courtStatus      String                 @map("court_status")
+  missingPlayers   Int                    @map("missing_players")
+  costPerPerson    Int                    @map("cost_per_person")
+  paymentLabel     String                 @map("payment_label")
+  comment          String?
+  status           OpenMatchAlertStatus   @default(OPEN)
+  createdAt        DateTime               @default(now()) @map("created_at")
+  updatedAt        DateTime               @updatedAt @map("updated_at")
+  participants     OpenMatchParticipant[]
+
+  @@index([status, startsAt])
+  @@index([organizerId])
+  @@map("open_match_alerts")
+}
+
+model OpenMatchParticipant {
+  id        String         @id @default(uuid())
+  alertId   String         @map("alert_id")
+  userId    String         @map("user_id")
+  createdAt DateTime       @default(now()) @map("created_at")
+  alert     OpenMatchAlert @relation(fields: [alertId], references: [id], onDelete: Cascade)
+  user      User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([alertId, userId])
+  @@index([userId])
+  @@map("open_match_participants")
 }
 
 model Tournament {

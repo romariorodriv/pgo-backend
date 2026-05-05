@@ -10,6 +10,7 @@ import {
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
+import { AdminAddRegistrationDto } from './dto/admin-add-registration.dto';
 import { CreateTournamentDto } from './dto/create-tournament.dto';
 import { RegisterTournamentPartnerDto } from './dto/register-tournament-partner.dto';
 import { RegisterTournamentSoloDto } from './dto/register-tournament-solo.dto';
@@ -234,6 +235,21 @@ export class TournamentsController {
   ) {
     return this.tournamentsService.registerWithPartner(
       id,
+      user.id,
+      body.partnerUserId,
+    );
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post(':id/admin-registrations')
+  addAdminRegistration(
+    @Param('id') id: string,
+    @Body() body: AdminAddRegistrationDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.tournamentsService.addAdminRegistration(
+      id,
+      body.userId,
       user.id,
       body.partnerUserId,
     );

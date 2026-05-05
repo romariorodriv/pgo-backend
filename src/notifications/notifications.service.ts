@@ -82,6 +82,8 @@ export class NotificationsService {
           priority: 'high',
           notification: {
             channelId: 'pgo_default',
+            icon: 'ic_pgo_notification',
+            color: '#17263A',
             sound: 'default',
           },
         },
