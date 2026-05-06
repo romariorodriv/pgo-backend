@@ -18,9 +18,6 @@ export class OpenMatchAlertsService {
         status: {
           not: OpenMatchAlertStatus.CANCELED,
         },
-        startsAt: {
-          gte: new Date(Date.now() - 2 * 60 * 60 * 1000),
-        },
       },
       include: this.include(userId),
       orderBy: { startsAt: 'asc' },
