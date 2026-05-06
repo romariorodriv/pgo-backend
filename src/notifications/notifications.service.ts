@@ -52,6 +52,27 @@ export class NotificationsService {
   }
 
   async sendToUser(userId: string, payload: PushPayload) {
+    return this.sendToUsers([userId], payload);
+  }
+
+  async sendToAllUsers(
+    payload: PushPayload,
+    options?: { excludeUserIds?: string[] },
+  ) {
+    const devices = await this.prisma.pushDeviceToken.findMany({
+      where: {
+        userId:
+          options?.excludeUserIds && options.excludeUserIds.length > 0
+            ? { notIn: options.excludeUserIds }
+            : undefined,
+      },
+      select: { token: true },
+    });
+
+    return this.sendToDevices(devices, payload);
+  }
+
+  async sendToUsers(userIds: string[], payload: PushPayload) {
     if (!this.firebaseApp) {
       this.logger.warn(
         'Firebase Admin no esta configurado. Se omitio el envio push.',
@@ -59,48 +80,78 @@ export class NotificationsService {
       return { sent: 0, skipped: true };
     }
 
+    const uniqueUserIds = [...new Set(userIds.filter(Boolean))];
+    if (uniqueUserIds.length === 0) {
+      return { sent: 0, skipped: false };
+    }
+
     const devices = await this.prisma.pushDeviceToken.findMany({
-      where: { userId },
+      where: { userId: { in: uniqueUserIds } },
       select: { token: true },
     });
+
+    return this.sendToDevices(devices, payload);
+  }
+
+  private async sendToDevices(
+    devices: { token: string }[],
+    payload: PushPayload,
+  ) {
+    if (!this.firebaseApp) {
+      this.logger.warn(
+        'Firebase Admin no esta configurado. Se omitio el envio push.',
+      );
+      return { sent: 0, skipped: true };
+    }
 
     if (devices.length === 0) {
       return { sent: 0, skipped: false };
     }
 
     try {
-      const response = await getMessaging(
-        this.firebaseApp,
-      ).sendEachForMulticast({
-        tokens: devices.map((device) => device.token),
-        notification: {
-          title: payload.title,
-          body: payload.body,
-        },
-        data: payload.data ?? {},
-        android: {
-          priority: 'high',
-          notification: {
-            channelId: 'pgo_default',
-            icon: 'ic_pgo_notification',
-            color: '#17263A',
-            sound: 'default',
-          },
-        },
-      });
+      let successCount = 0;
+      let failureCount = 0;
+      const invalidTokens: string[] = [];
 
-      const invalidTokens = response.responses
-        .map((item, index) => ({
-          token: devices[index].token,
-          error: item.error?.code,
-        }))
-        .filter((item) =>
-          [
-            'messaging/invalid-registration-token',
-            'messaging/registration-token-not-registered',
-          ].includes(item.error ?? ''),
-        )
-        .map((item) => item.token);
+      for (let index = 0; index < devices.length; index += 500) {
+        const chunk = devices.slice(index, index + 500);
+        const response = await getMessaging(
+          this.firebaseApp,
+        ).sendEachForMulticast({
+          tokens: chunk.map((device) => device.token),
+          notification: {
+            title: payload.title,
+            body: payload.body,
+          },
+          data: payload.data ?? {},
+          android: {
+            priority: 'high',
+            notification: {
+              channelId: 'pgo_default',
+              icon: 'ic_pgo_notification',
+              color: '#17263A',
+              sound: 'default',
+            },
+          },
+        });
+
+        successCount += response.successCount;
+        failureCount += response.failureCount;
+        invalidTokens.push(
+          ...response.responses
+            .map((item, itemIndex) => ({
+              token: chunk[itemIndex].token,
+              error: item.error?.code,
+            }))
+            .filter((item) =>
+              [
+                'messaging/invalid-registration-token',
+                'messaging/registration-token-not-registered',
+              ].includes(item.error ?? ''),
+            )
+            .map((item) => item.token),
+        );
+      }
 
       if (invalidTokens.length > 0) {
         await this.prisma.pushDeviceToken.deleteMany({
@@ -109,8 +160,8 @@ export class NotificationsService {
       }
 
       return {
-        sent: response.successCount,
-        failed: response.failureCount,
+        sent: successCount,
+        failed: failureCount,
       };
     } catch (error) {
       this.logger.error('No se pudo enviar push por Firebase', error);
