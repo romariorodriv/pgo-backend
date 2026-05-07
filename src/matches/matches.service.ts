@@ -5,10 +5,14 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { MatchType } from '@prisma/client';
+import { NotificationsService } from '../notifications/notifications.service';
 
 @Injectable()
 export class MatchesService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly notificationsService: NotificationsService,
+  ) {}
 
   private readonly publicParticipantsInclude = {
     participants: {
@@ -32,7 +36,7 @@ export class MatchesService {
     },
   };
 
-  create(
+  async create(
     createdById: string,
     clubName: string,
     playedAt: Date,
@@ -54,7 +58,7 @@ export class MatchesService {
       );
     }
 
-    return this.prisma.$transaction(async (tx) => {
+    const createdMatch = await this.prisma.$transaction(async (tx) => {
       const participantUsers = await tx.user.count({
         where: {
           id: {
@@ -88,6 +92,19 @@ export class MatchesService {
         include: this.publicParticipantsInclude,
       });
     });
+
+    const recipients = uniqueParticipantIds.filter((id) => id !== createdById);
+    void this.notificationsService.sendToUsers(recipients, {
+      title: 'Te agregaron a una actividad',
+      body: 'Confirma el resultado cuando este listo.',
+      data: {
+        type: 'MATCH_RESULT_CONFIRMATION_REQUIRED',
+        screen: 'profile_history',
+        matchId: createdMatch.id,
+      },
+    });
+
+    return createdMatch;
   }
 
   findMyMatches(userId: string) {
@@ -239,9 +256,38 @@ export class MatchesService {
       }
     });
 
-    return this.prisma.match.findUnique({
+    const finalized = await this.prisma.match.findUnique({
       where: { id: matchId },
       include: this.publicParticipantsInclude,
     });
+
+    if (finalized) {
+      const participantIds = finalized.participants.map(
+        (participant) => participant.userId,
+      );
+      const recipients = participantIds.filter((id) => id !== userId);
+
+      void this.notificationsService.sendToUsers(recipients, {
+        title: 'Resultado registrado',
+        body: 'Un partido contigo ya tiene resultado. Revisa tu actividad.',
+        data: {
+          type: 'MATCH_RESULT_RECORDED',
+          screen: 'profile_history',
+          matchId: finalized.id,
+        },
+      });
+
+      void this.notificationsService.sendToUsers(uniqueWinnerIds, {
+        title: 'Ganaste +30 XP',
+        body: 'Tu experiencia fue actualizada por el resultado del partido.',
+        data: {
+          type: 'XP_GAINED',
+          screen: 'profile',
+          matchId: finalized.id,
+        },
+      });
+    }
+
+    return finalized;
   }
 }

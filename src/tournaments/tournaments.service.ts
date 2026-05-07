@@ -111,7 +111,7 @@ export class TournamentsService {
   ) {
     const slug = await this.generateUniqueSlug(title);
 
-    return this.prisma.tournament.create({
+    const tournament = await this.prisma.tournament.create({
       data: {
         createdById,
         title,
@@ -143,6 +143,24 @@ export class TournamentsService {
         },
       },
     });
+
+    if (tournament.status === TournamentStatus.PUBLISHED) {
+      void this.notificationsService.sendToAllUsers(
+        {
+          title: 'Nuevo torneo disponible',
+          body: `${tournament.title} en ${tournament.location}.`,
+          data: {
+            type: 'TOURNAMENT_AVAILABLE',
+            screen: 'tournament_detail',
+            tournamentId: tournament.id,
+          },
+        },
+        { excludeUserIds: [createdById] },
+      );
+      this.scheduleTournamentStartReminder(tournament.id, tournament.startsAt);
+    }
+
+    return tournament;
   }
 
   findAll() {
@@ -571,6 +589,8 @@ export class TournamentsService {
       },
     });
 
+    void this.notifyTournamentMatchStarted(tournamentId, updated);
+
     return this.mapTournamentMatch(updated);
   }
 
@@ -609,6 +629,8 @@ export class TournamentsService {
       },
     });
 
+    void this.notifyTournamentMatchStarted(tournamentId, updated);
+
     return this.mapTournamentMatch(updated, { canManage: true });
   }
 
@@ -636,6 +658,9 @@ export class TournamentsService {
       await this.rebuildNextRounds(tx, tournamentId);
       return finishedMatch;
     });
+
+    void this.notifyTournamentMatchFinished(tournamentId, updated);
+    void this.notifyTournamentNextMatchReady(tournamentId, updated);
 
     return this.mapTournamentMatch(updated);
   }
@@ -678,6 +703,9 @@ export class TournamentsService {
       await this.rebuildNextRounds(tx, tournamentId);
       return finishedMatch;
     });
+
+    void this.notifyTournamentMatchFinished(tournamentId, updated);
+    void this.notifyTournamentNextMatchReady(tournamentId, updated);
 
     return this.mapTournamentMatch(updated, { canManage: true });
   }
@@ -808,7 +836,7 @@ export class TournamentsService {
     await this.ensureTournamentOpen(tournamentId);
     await this.ensureUserCanRegister(tournamentId, userId);
 
-    return this.prisma.tournamentRegistration.create({
+    const registration = await this.prisma.tournamentRegistration.create({
       data: {
         tournamentId,
         userId,
@@ -837,6 +865,10 @@ export class TournamentsService {
         },
       },
     });
+
+    await this.notifyTournamentAlmostFullIfNeeded(tournamentId);
+
+    return registration;
   }
 
   async registerWithPartner(
@@ -861,7 +893,7 @@ export class TournamentsService {
       throw new NotFoundException('La pareja seleccionada no existe');
     }
 
-    return this.prisma.tournamentRegistration.create({
+    const registration = await this.prisma.tournamentRegistration.create({
       data: {
         tournamentId,
         userId,
@@ -896,6 +928,10 @@ export class TournamentsService {
         },
       },
     });
+
+    await this.notifyTournamentAlmostFullIfNeeded(tournamentId);
+
+    return registration;
   }
 
   async pairAdminRegistrations(
@@ -1096,6 +1132,8 @@ export class TournamentsService {
         },
       });
     });
+
+    await this.notifyTournamentAlmostFullIfNeeded(tournamentId);
 
     return this.findOne(tournamentId);
   }
@@ -1463,6 +1501,222 @@ export class TournamentsService {
     );
   }
 
+  private async getMatchParticipantIds(
+    tournamentId: string,
+    match: Pick<TournamentMatchRecord, 'teamOneLabel' | 'teamTwoLabel'>,
+  ) {
+    const targetLabels = new Set([
+      match.teamOneLabel.trim(),
+      match.teamTwoLabel.trim(),
+    ]);
+
+    const registrations = await this.prisma.tournamentRegistration.findMany({
+      where: {
+        tournamentId,
+        status: TournamentRegistrationStatus.CONFIRMED,
+        partnerUserId: {
+          not: null,
+        },
+      },
+      include: {
+        user: { select: { id: true, name: true } },
+        partnerUser: { select: { id: true, name: true } },
+      },
+    });
+
+    const userIds = new Set<string>();
+    for (const registration of registrations) {
+      const label =
+        `${registration.user.name} / ${registration.partnerUser!.name}`.trim();
+      if (targetLabels.has(label)) {
+        userIds.add(registration.userId);
+        userIds.add(registration.partnerUserId!);
+      }
+    }
+
+    return [...userIds];
+  }
+
+  private async notifyTournamentMatchStarted(
+    tournamentId: string,
+    match: TournamentMatchRecord,
+  ) {
+    const recipientIds = await this.getMatchParticipantIds(tournamentId, match);
+
+    await this.notificationsService.sendToUsers(recipientIds, {
+      title: 'Tu partido empezo',
+      body: `${match.courtLabel} - ${this.getStageLabel(match.stage)} esta en vivo.`,
+      data: {
+        type: 'TOURNAMENT_MATCH_STARTED',
+        screen: 'tournament_live',
+        tournamentId,
+        matchId: match.id,
+      },
+    });
+
+    await this.notificationsService.sendToUsers(recipientIds, {
+      title: 'Registra el marcador',
+      body: 'Cuando termine el partido podras cargar el puntaje final.',
+      data: {
+        type: 'MATCH_SCORE_REQUIRED',
+        screen: 'tournament_live',
+        tournamentId,
+        matchId: match.id,
+      },
+    });
+  }
+
+  private async notifyTournamentMatchFinished(
+    tournamentId: string,
+    match: TournamentMatchRecord,
+  ) {
+    const recipientIds = await this.getMatchParticipantIds(tournamentId, match);
+
+    await this.notificationsService.sendToUsers(recipientIds, {
+      title: 'Resultado registrado',
+      body: `${match.winnerLabel ?? 'Una dupla'} gano ${match.score ?? 'el partido'}.`,
+      data: {
+        type: 'MATCH_RESULT_RECORDED',
+        screen: 'tournament_live',
+        tournamentId,
+        matchId: match.id,
+      },
+    });
+  }
+
+  private async notifyTournamentNextMatchReady(
+    tournamentId: string,
+    finishedMatch: TournamentMatchRecord,
+  ) {
+    if (!finishedMatch.winnerLabel) {
+      return;
+    }
+
+    const matches = await this.prisma.tournamentMatch.findMany({
+      where: { tournamentId },
+      orderBy: [{ scheduledAt: 'asc' }, { matchNumber: 'asc' }],
+    });
+    const nextMatch = this.findNextMatchForWinner(
+      matches,
+      finishedMatch.winnerLabel,
+    );
+
+    if (!nextMatch) {
+      return;
+    }
+
+    const recipientIds = await this.getMatchParticipantIds(
+      tournamentId,
+      nextMatch,
+    );
+    await this.notificationsService.sendToUsers(recipientIds, {
+      title: 'Tu proximo partido ya esta listo',
+      body: `${nextMatch.courtLabel} - ${this.getStageLabel(nextMatch.stage)}.`,
+      data: {
+        type: 'TOURNAMENT_NEXT_MATCH_READY',
+        screen: 'tournament_live',
+        tournamentId,
+        matchId: nextMatch.id,
+      },
+    });
+  }
+
+  private scheduleTournamentStartReminder(tournamentId: string, startsAt: Date) {
+    const notifyAt = startsAt.getTime() - 60 * 60 * 1000;
+    const delay = notifyAt - Date.now();
+    if (delay <= 0) {
+      return;
+    }
+
+    const reminder = setTimeout(() => {
+      void this.notifyTournamentStartReminder(tournamentId);
+    }, delay);
+    reminder.unref?.();
+  }
+
+  private async notifyTournamentStartReminder(tournamentId: string) {
+    const tournament = await this.prisma.tournament.findUnique({
+      where: { id: tournamentId },
+      include: {
+        registrations: {
+          where: { status: TournamentRegistrationStatus.CONFIRMED },
+          select: { userId: true, partnerUserId: true },
+        },
+      },
+    });
+
+    if (!tournament || tournament.status === TournamentStatus.COMPLETED) {
+      return;
+    }
+
+    const recipientIds = new Set<string>();
+    for (const registration of tournament.registrations) {
+      recipientIds.add(registration.userId);
+      if (registration.partnerUserId) {
+        recipientIds.add(registration.partnerUserId);
+      }
+    }
+
+    await this.notificationsService.sendToUsers([...recipientIds], {
+      title: 'Tu torneo empieza en 1 hora',
+      body: `${tournament.title} en ${tournament.location}.`,
+      data: {
+        type: 'TOURNAMENT_START_REMINDER',
+        screen: 'tournament_detail',
+        tournamentId: tournament.id,
+      },
+    });
+  }
+
+  private async notifyTournamentAlmostFullIfNeeded(tournamentId: string) {
+    const tournament = await this.prisma.tournament.findUnique({
+      where: { id: tournamentId },
+      include: {
+        registrations: {
+          where: {
+            status: {
+              not: TournamentRegistrationStatus.CANCELED,
+            },
+          },
+          select: {
+            userId: true,
+            partnerUserId: true,
+          },
+        },
+      },
+    });
+
+    if (!tournament || !tournament.registrationsOpen) {
+      return;
+    }
+
+    const playerIds = new Set<string>();
+    for (const registration of tournament.registrations) {
+      playerIds.add(registration.userId);
+      if (registration.partnerUserId) {
+        playerIds.add(registration.partnerUserId);
+      }
+    }
+
+    const remaining = tournament.playerCapacity - playerIds.size;
+    if (remaining <= 0 || remaining > 2) {
+      return;
+    }
+
+    await this.notificationsService.sendToAllUsers(
+      {
+        title: 'Ultimos cupos disponibles',
+        body: `${tournament.title} tiene ${remaining} cupo${remaining === 1 ? '' : 's'} libre${remaining === 1 ? '' : 's'}.`,
+        data: {
+          type: 'TOURNAMENT_ALMOST_FULL',
+          screen: 'tournament_detail',
+          tournamentId: tournament.id,
+        },
+      },
+      { excludeUserIds: [tournament.createdById] },
+    );
+  }
+
   private async notifyTournamentBracketReady(tournament: {
     id: string;
     title: string;
@@ -1489,10 +1743,11 @@ export class TournamentsService {
     await Promise.all(
       [...recipientIds].map((userId) =>
         this.notificationsService.sendToUser(userId, {
-          title: 'Tu torneo ya tiene cruces',
-          body: `${tournament.title} ya empezo. Revisa tu proximo partido.`,
+          title: 'Ya tienes partido',
+          body: `${tournament.title} ya tiene cruces. Revisa tu proximo partido.`,
           data: {
-            type: 'tournament_bracket_ready',
+            type: 'TOURNAMENT_MATCH_ASSIGNED',
+            screen: 'tournament_live',
             tournamentId: tournament.id,
           },
         }),

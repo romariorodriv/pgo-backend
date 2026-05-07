@@ -334,6 +334,8 @@ export class SocialService {
       return accepted;
     });
 
+    await this.notifyFriendAccepted(updated, userId);
+
     return this.formatConnection(updated, userId);
   }
 
@@ -409,8 +411,34 @@ export class SocialService {
       body: `${friendship.requester.name} quiere agregarte como amigo`,
       data: {
         type: 'friend_request',
+        screen: 'profile_friends',
         friendshipId: friendship.id,
         requesterId: friendship.requesterId,
+      },
+    });
+  }
+
+  private async notifyFriendAccepted(
+    friendship: FriendshipWithUsers,
+    acceptedByUserId: string,
+  ) {
+    const acceptedBy =
+      friendship.requesterId === acceptedByUserId
+        ? friendship.requester
+        : friendship.addressee;
+    const recipientId =
+      friendship.requesterId === acceptedByUserId
+        ? friendship.addresseeId
+        : friendship.requesterId;
+
+    await this.notificationsService.sendToUser(recipientId, {
+      title: 'Solicitud aceptada',
+      body: `${acceptedBy.name} ya es tu amigo en PGO`,
+      data: {
+        type: 'friend_accepted',
+        screen: 'profile_friends',
+        friendshipId: friendship.id,
+        friendId: acceptedByUserId,
       },
     });
   }
