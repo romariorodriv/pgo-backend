@@ -1,4 +1,4 @@
-﻿CREATE TYPE "OpenMatchCoordinationStatus" AS ENUM ('ARRIVED', 'ON_THE_WAY', 'ARRIVING_10', 'CANNOT_GO');
+CREATE TYPE "OpenMatchCoordinationStatus" AS ENUM ('ARRIVED', 'ON_THE_WAY', 'ARRIVING_10', 'CANNOT_GO');
 
 CREATE TABLE "open_match_coordination_updates" (
     "id" TEXT NOT NULL,
