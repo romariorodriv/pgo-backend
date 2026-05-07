@@ -4,7 +4,10 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { OpenMatchAlertStatus } from '@prisma/client';
+import {
+  OpenMatchAlertStatus,
+  OpenMatchCoordinationStatus,
+} from '@prisma/client';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateOpenMatchAlertDto } from './dto/create-open-match-alert.dto';
@@ -180,6 +183,77 @@ export class OpenMatchAlertsService {
     return this.findOne(id, userId);
   }
 
+  async updateCoordination(
+    id: string,
+    userId: string,
+    status: OpenMatchCoordinationStatus,
+  ) {
+    const alert = await this.prisma.openMatchAlert.findUnique({
+      where: { id },
+      include: {
+        organizer: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
+        participants: {
+          include: {
+            user: {
+              select: {
+                id: true,
+                name: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    if (!alert || alert.status === OpenMatchAlertStatus.CANCELED) {
+      throw new NotFoundException('Partido abierto no encontrado');
+    }
+
+    const isOrganizer = alert.organizerId === userId;
+    const participant = alert.participants.find(
+      (item) => item.userId === userId,
+    );
+    if (!isOrganizer && !participant) {
+      throw new BadRequestException('Solo los jugadores del partido pueden coordinar');
+    }
+
+    const actorName =
+      isOrganizer ? alert.organizer.name : participant?.user.name || 'Jugador';
+    const message = this.coordinationMessage(status);
+
+    await this.prisma.openMatchCoordinationUpdate.create({
+      data: {
+        alertId: id,
+        userId,
+        status,
+        message,
+      },
+    });
+
+    const recipientIds = [
+      alert.organizerId,
+      ...alert.participants.map((item) => item.userId),
+    ].filter((recipientId, index, list) => {
+      return recipientId !== userId && list.indexOf(recipientId) === index;
+    });
+
+    void this.notificationsService.sendToUsers(recipientIds, {
+      title:
+        status === OpenMatchCoordinationStatus.CANNOT_GO
+          ? `${actorName} no podra ir`
+          : `${actorName} actualizo su estado`,
+      body: message,
+      data: this.notificationData('OPEN_MATCH_COORDINATION_UPDATED', id),
+    });
+
+    return this.findOne(id, userId);
+  }
+
   private notificationData(type: string, alertId: string) {
     return {
       type,
@@ -219,6 +293,25 @@ export class OpenMatchAlertsService {
           createdAt: 'asc' as const,
         },
       },
+      coordinationUpdates: {
+        include: {
+          user: {
+            select: {
+              id: true,
+              name: true,
+              profile: {
+                select: {
+                  photoUrl: true,
+                },
+              },
+            },
+          },
+        },
+        orderBy: {
+          createdAt: 'desc' as const,
+        },
+        take: 20,
+      },
       _count: {
         select: {
           participants: true,
@@ -229,6 +322,12 @@ export class OpenMatchAlertsService {
 
   private mapAlert(alert: any, userId: string) {
     const joinedCount = alert._count?.participants ?? alert.participants.length;
+    const latestStatusByUser = new Map<string, any>();
+    for (const update of alert.coordinationUpdates ?? []) {
+      if (!latestStatusByUser.has(update.userId)) {
+        latestStatusByUser.set(update.userId, update);
+      }
+    }
     return {
       id: alert.id,
       category: alert.category,
@@ -260,6 +359,38 @@ export class OpenMatchAlertsService {
         name: participant.user.name,
         photoUrl: participant.user.profile?.photoUrl ?? null,
       })),
+      coordinationUpdates: (alert.coordinationUpdates ?? []).map((update: any) => ({
+        id: update.id,
+        status: update.status,
+        message: update.message,
+        createdAt: update.createdAt,
+        user: {
+          id: update.user.id,
+          name: update.user.name,
+          photoUrl: update.user.profile?.photoUrl ?? null,
+        },
+      })),
+      latestCoordinationByUser: Array.from(latestStatusByUser.values()).map(
+        (update: any) => ({
+          userId: update.userId,
+          status: update.status,
+          message: update.message,
+          createdAt: update.createdAt,
+        }),
+      ),
     };
+  }
+
+  private coordinationMessage(status: OpenMatchCoordinationStatus) {
+    switch (status) {
+      case OpenMatchCoordinationStatus.ARRIVED:
+        return 'Ya estoy en el club';
+      case OpenMatchCoordinationStatus.ON_THE_WAY:
+        return 'Voy en camino';
+      case OpenMatchCoordinationStatus.ARRIVING_10:
+        return 'Llego en 10 min';
+      case OpenMatchCoordinationStatus.CANNOT_GO:
+        return 'No podre ir';
+    }
   }
 }

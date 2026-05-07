@@ -3,6 +3,7 @@ import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { CreateOpenMatchAlertDto } from './dto/create-open-match-alert.dto';
+import { UpdateOpenMatchCoordinationDto } from './dto/update-open-match-coordination.dto';
 import { OpenMatchAlertsService } from './open-match-alerts.service';
 
 @Controller('open-match-alerts')
@@ -31,5 +32,14 @@ export class OpenMatchAlertsController {
   @Post(':id/join')
   join(@Param('id') id: string, @CurrentUser() user: AuthenticatedUser) {
     return this.alertsService.join(id, user.id);
+  }
+
+  @Post(':id/coordination')
+  updateCoordination(
+    @Param('id') id: string,
+    @Body() body: UpdateOpenMatchCoordinationDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.alertsService.updateCoordination(id, user.id, body.status);
   }
 }

@@ -67,6 +67,13 @@ enum OpenMatchAlertStatus {
   CANCELED
 }
 
+enum OpenMatchCoordinationStatus {
+  ARRIVED
+  ON_THE_WAY
+  ARRIVING_10
+  CANNOT_GO
+}
+
 model User {
   id                               String                   @id @default(uuid())
   name                             String
@@ -88,6 +95,7 @@ model User {
   pushDeviceTokens                 PushDeviceToken[]
   organizedOpenMatchAlerts         OpenMatchAlert[]         @relation("OpenMatchOrganizer")
   openMatchJoins                   OpenMatchParticipant[]
+  openMatchCoordinationUpdates     OpenMatchCoordinationUpdate[]
 
   @@map("users")
 }
@@ -207,10 +215,26 @@ model OpenMatchAlert {
   createdAt        DateTime               @default(now()) @map("created_at")
   updatedAt        DateTime               @updatedAt @map("updated_at")
   participants     OpenMatchParticipant[]
+  coordinationUpdates OpenMatchCoordinationUpdate[]
 
   @@index([status, startsAt])
   @@index([organizerId])
   @@map("open_match_alerts")
+}
+
+model OpenMatchCoordinationUpdate {
+  id        String                      @id @default(uuid())
+  alertId   String                      @map("alert_id")
+  userId    String                      @map("user_id")
+  status    OpenMatchCoordinationStatus
+  message   String
+  createdAt DateTime                    @default(now()) @map("created_at")
+  alert     OpenMatchAlert              @relation(fields: [alertId], references: [id], onDelete: Cascade)
+  user      User                        @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([alertId, createdAt])
+  @@index([userId])
+  @@map("open_match_coordination_updates")
 }
 
 model OpenMatchParticipant {
