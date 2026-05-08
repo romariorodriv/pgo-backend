@@ -19,6 +19,10 @@ export class UpdateTournamentDto {
   tournamentType?: string;
 
   @IsOptional()
+  @IsString()
+  pairingMode?: string;
+
+  @IsOptional()
   @IsInt()
   @Min(2)
   playerCapacity?: number;

@@ -32,6 +32,7 @@ export class TournamentsController {
       user.id,
       body.title,
       body.tournamentType,
+      body.pairingMode,
       body.playerCapacity,
       body.modality,
       body.format,

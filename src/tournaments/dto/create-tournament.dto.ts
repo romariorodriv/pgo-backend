@@ -16,6 +16,10 @@ export class CreateTournamentDto {
   @IsString()
   tournamentType: string;
 
+  @IsOptional()
+  @IsString()
+  pairingMode?: string;
+
   @IsInt()
   @Min(2)
   playerCapacity: number;

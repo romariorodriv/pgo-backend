@@ -257,6 +257,7 @@ model Tournament {
   title             String
   slug              String?                  @unique
   tournamentType    String                   @map("tournament_type")
+  pairingMode       String                   @default("FIXED") @map("pairing_mode")
   playerCapacity    Int                      @map("player_capacity")
   modality          String
   format            String

@@ -93,6 +93,7 @@ export class TournamentsService {
     createdById: string,
     title: string,
     tournamentType: string,
+    pairingMode: string | undefined,
     playerCapacity: number,
     modality: string,
     format: string,
@@ -110,6 +111,11 @@ export class TournamentsService {
     registrationsOpen = true,
   ) {
     const slug = await this.generateUniqueSlug(title);
+    const normalizedPairingMode =
+      tournamentType.toLowerCase().includes('rey') &&
+      pairingMode === 'ROTATING'
+        ? 'ROTATING'
+        : 'FIXED';
 
     const tournament = await this.prisma.tournament.create({
       data: {
@@ -117,6 +123,7 @@ export class TournamentsService {
         title,
         slug,
         tournamentType,
+        pairingMode: normalizedPairingMode,
         playerCapacity,
         modality,
         format,
@@ -748,6 +755,7 @@ export class TournamentsService {
       select: {
         id: true,
         createdById: true,
+        tournamentType: true,
       },
     });
 
@@ -768,6 +776,16 @@ export class TournamentsService {
           : {}),
         ...(body.tournamentType != null
           ? { tournamentType: body.tournamentType }
+          : {}),
+        ...(body.pairingMode != null
+          ? {
+              pairingMode:
+                (body.tournamentType ?? tournament.tournamentType)
+                  .toLowerCase()
+                  .includes('rey') && body.pairingMode === 'ROTATING'
+                  ? body.pairingMode
+                  : 'FIXED',
+            }
           : {}),
         ...(body.playerCapacity != null
           ? { playerCapacity: body.playerCapacity }

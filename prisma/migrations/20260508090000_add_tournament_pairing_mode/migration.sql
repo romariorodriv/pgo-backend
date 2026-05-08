@@ -1,0 +1,2 @@
+ALTER TABLE "tournaments"
+ADD COLUMN IF NOT EXISTS "pairing_mode" TEXT NOT NULL DEFAULT 'FIXED';
