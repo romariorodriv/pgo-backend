@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -45,6 +46,32 @@ export class OpenMatchAlertsService {
     }
 
     return this.mapAlert(alert, userId);
+  }
+
+  async remove(id: string, userId: string) {
+    const alert = await this.prisma.openMatchAlert.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        organizerId: true,
+        status: true,
+      },
+    });
+
+    if (!alert || alert.status === OpenMatchAlertStatus.CANCELED) {
+      throw new NotFoundException('Partido abierto no encontrado');
+    }
+
+    if (alert.organizerId !== userId) {
+      throw new ForbiddenException('Solo el creador puede eliminar esta alerta');
+    }
+
+    await this.prisma.openMatchAlert.update({
+      where: { id },
+      data: { status: OpenMatchAlertStatus.CANCELED },
+    });
+
+    return { deleted: true };
   }
 
   async create(userId: string, body: CreateOpenMatchAlertDto) {
