@@ -1,4 +1,9 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import {
   FriendshipStatus,
   MatchParticipant,
@@ -39,6 +44,8 @@ type MatchParticipantWithMatch = MatchParticipant & {
 
 @Injectable()
 export class ProfileService {
+  private readonly logger = new Logger(ProfileService.name);
+
   constructor(private readonly prisma: PrismaService) {}
 
   async getMyProfile(userId: string) {
@@ -77,30 +84,130 @@ export class ProfileService {
   }
 
   async updateMyProfile(userId: string, updateProfileDto: UpdateProfileDto) {
-    const { name, ...profileData } = updateProfileDto;
+    const { name, allowMatchInvites, ...profileData } = updateProfileDto;
+    this.logger.debug(
+      `updateMyProfile userId=${userId} fields=${Object.keys(updateProfileDto).join(',')}`,
+    );
     const trimmedName = name?.trim();
+    const currentProfile = await this.prisma.profile.findUnique({
+      where: { userId },
+    });
+    const profileUpdateData = {
+      ...profileData,
+      ...(profileData.categoryQuizAnswers !== undefined
+        ? {
+            categoryQuizAnswers:
+              profileData.categoryQuizAnswers as Prisma.InputJsonValue,
+          }
+        : {}),
+    } as Prisma.ProfileUncheckedUpdateInput;
+    const mergedProfileState = {
+      category: profileData.category ?? currentProfile?.category ?? null,
+      categoryOrigin:
+        profileData.categoryOrigin ?? currentProfile?.categoryOrigin ?? null,
+      categoryIsProvisional:
+        profileData.categoryIsProvisional ??
+        currentProfile?.categoryIsProvisional ??
+        false,
+      categorySuggested:
+        profileData.categorySuggested ??
+        currentProfile?.categorySuggested ??
+        null,
+      categoryPreliminary:
+        profileData.categoryPreliminary ??
+        currentProfile?.categoryPreliminary ??
+        null,
+      categoryMaxApplied:
+        profileData.categoryMaxApplied ??
+        currentProfile?.categoryMaxApplied ??
+        null,
+      categoryScore:
+        profileData.categoryScore ?? currentProfile?.categoryScore ?? null,
+      categoryQuizAnswers:
+        profileData.categoryQuizAnswers ??
+        currentProfile?.categoryQuizAnswers ??
+        null,
+      hasCompletedInitialOnboarding:
+        profileData.hasCompletedInitialOnboarding ??
+        currentProfile?.hasCompletedInitialOnboarding ??
+        false,
+    };
+
+    if (
+      mergedProfileState.hasCompletedInitialOnboarding &&
+      !this.hasEnoughInitialCategoryEvidence(mergedProfileState)
+    ) {
+      this.logger.warn(
+        `updateMyProfile validation_failed userId=${userId} fields=${Object.keys(profileData).join(',')}`,
+      );
+      throw new BadRequestException(
+        'No se puede marcar onboarding completado sin categoria o datos del quiz.',
+      );
+    }
 
     await this.prisma.$transaction(async (tx) => {
-      if (trimmedName) {
+      if (trimmedName || allowMatchInvites !== undefined) {
         await tx.user.update({
           where: { id: userId },
-          data: { name: trimmedName },
+          data: {
+            ...(trimmedName ? { name: trimmedName } : {}),
+            ...(allowMatchInvites !== undefined ? { allowMatchInvites } : {}),
+          },
         });
       }
 
-      if (Object.keys(profileData).length > 0) {
+      if (Object.keys(profileUpdateData).length > 0) {
         await tx.profile.upsert({
           where: { userId },
           create: {
             userId,
-            ...profileData,
-          },
-          update: profileData,
+            ...profileUpdateData,
+          } as Prisma.ProfileUncheckedCreateInput,
+          update: profileUpdateData,
         });
       }
     });
 
     return this.getMyProfile(userId);
+  }
+
+  private hasEnoughInitialCategoryEvidence(state: {
+    category: string | null;
+    categoryOrigin: string | null;
+    categoryIsProvisional: boolean;
+    categorySuggested: string | null;
+    categoryPreliminary: string | null;
+    categoryMaxApplied: string | null;
+    categoryScore: number | null;
+    categoryQuizAnswers: unknown;
+  }) {
+    if ((state.category ?? '').trim().length > 0) return true;
+
+    const origin = (state.categoryOrigin ?? '').trim().toLowerCase();
+    if (origin === 'quiz' || origin === 'manual' || origin === 'confirmed') {
+      return true;
+    }
+
+    if (state.categoryIsProvisional) return true;
+    if ((state.categorySuggested ?? '').trim().length > 0) return true;
+    if ((state.categoryPreliminary ?? '').trim().length > 0) return true;
+    if ((state.categoryMaxApplied ?? '').trim().length > 0) return true;
+    if (state.categoryScore !== null && state.categoryScore !== undefined) {
+      return true;
+    }
+    if (this.hasQuizAnswers(state.categoryQuizAnswers)) {
+      return true;
+    }
+
+    return false;
+  }
+
+  private hasQuizAnswers(value: unknown) {
+    if (!value || typeof value !== 'object') {
+      return false;
+    }
+
+    return Array.isArray(value) ? value.length > 0 : Object.keys(value).length > 0;
   }
 
   private async buildProfileResponse(
@@ -170,6 +277,16 @@ export class ProfileService {
       followersCount: profile.followersCount,
       followingCount: profile.followingCount,
       socialNotificationsCount,
+      hasSeenHomeGuide: profile.hasSeenHomeGuide,
+      hasCompletedInitialOnboarding: profile.hasCompletedInitialOnboarding,
+      categorySuggested: profile.categorySuggested,
+      categoryPreliminary: profile.categoryPreliminary,
+      categoryMaxApplied: profile.categoryMaxApplied,
+      categoryScore: profile.categoryScore,
+      categoryQuizAnswers: profile.categoryQuizAnswers,
+      categoryIsProvisional: profile.categoryIsProvisional,
+      categoryOrigin: profile.categoryOrigin,
+      allowMatchInvites: user.allowMatchInvites,
       isCurrentUser: user.id === viewerUserId,
       matchHistory: recentHistory,
     };
