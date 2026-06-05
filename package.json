@@ -18,6 +18,7 @@
     "reset:single-user-category-onboarding": "ts-node scripts/reset-single-user-category-onboarding.ts",
     "clean:sports-data": "node --import tsx scripts/clean-sports-data.ts",
     "clean-sports-data": "node --import tsx scripts/clean-sports-data.ts",
+    "seed:two-admin-tournaments": "node --import tsx scripts/seed-two-admin-tournaments.ts",
     "start": "nest start",
     "start:dev": "nest start --watch",
     "start:debug": "nest start --debug --watch",
