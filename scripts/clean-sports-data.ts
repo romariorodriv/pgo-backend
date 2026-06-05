@@ -121,7 +121,6 @@ async function main() {
     openMatchAlerts,
     openMatchParticipants,
     openMatchCoordinationUpdates,
-    openMatchInvitations,
     matches,
     matchParticipants,
     notifications,
@@ -133,7 +132,6 @@ async function main() {
     prisma.openMatchAlert.count(),
     prisma.openMatchParticipant.count(),
     prisma.openMatchCoordinationUpdate.count(),
-    prisma.openMatchInvitation.count(),
     prisma.match.count(),
     prisma.matchParticipant.count(),
     prisma.appNotification.count({
@@ -184,9 +182,6 @@ async function main() {
     ...(await prisma.openMatchCoordinationUpdate.findMany({
       select: { userId: true },
     })).map((row) => row.userId),
-    ...(await prisma.openMatchInvitation.findMany({
-      select: { inviteeId: true },
-    })).map((row) => row.inviteeId),
     ...(await prisma.appNotification.findMany({
       where: {
         OR: [
@@ -209,7 +204,6 @@ async function main() {
     await countTable('openMatchAlerts', openMatchAlerts),
     await countTable('openMatchParticipants', openMatchParticipants),
     await countTable('openMatchCoordinationUpdates', openMatchCoordinationUpdates),
-    await countTable('openMatchInvitations', openMatchInvitations),
     await countTable('matches', matches),
     await countTable('matchParticipants', matchParticipants),
     await countTable('appNotifications(sports)', notifications),
@@ -239,7 +233,6 @@ async function main() {
   await prisma.$transaction(async (tx) => {
     await tx.appNotification.deleteMany({ where: { OR: sportsNotificationTypes } });
     await tx.openMatchCoordinationUpdate.deleteMany({});
-    await tx.openMatchInvitation.deleteMany({});
     await tx.openMatchParticipant.deleteMany({});
     await tx.openMatchAlert.deleteMany({});
     await tx.matchParticipant.deleteMany({});
