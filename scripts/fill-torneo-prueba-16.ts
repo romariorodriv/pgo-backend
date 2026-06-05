@@ -8,8 +8,8 @@ if (!connectionString) throw new Error('DATABASE_URL no esta definida en el ento
 
 const prisma = new PrismaClient({ adapter: new PrismaPg({ connectionString }) });
 
-const ADMIN_EMAIL = 'aromhr2106@gmail.com';
-const TARGET_TITLE = 'torneo prueba';
+const ADMIN_EMAIL = getArg('--admin') ?? 'aromhr2106@gmail.com';
+const TARGET_TITLE = getArg('--title') ?? 'torneo prueba';
 const TARGET_TOTAL = 16;
 const DEMO_PASSWORD = 'Demo12345*';
 const DEMO_CATEGORY = '4TA';
@@ -24,6 +24,11 @@ function norm(value: string) {
 
 function hasFlag(flag: string) {
   return process.argv.includes(flag);
+}
+
+function getArg(flag: string) {
+  const index = process.argv.indexOf(flag);
+  return index >= 0 ? process.argv[index + 1] : undefined;
 }
 
 function isProductionEnv() {
