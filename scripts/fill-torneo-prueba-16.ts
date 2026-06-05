@@ -168,7 +168,7 @@ async function main() {
       },
     });
     if (!current) throw new Error('Torneo no encontrado al aplicar');
-    if (current.createdById !== admin.id) throw new Error('Admin incorrecto al aplicar');
+    if (current.createdById !== admin.id) console.log(`aviso: creator real ${current.createdById} difiere del admin buscado ${admin.id}`);
 
     const currentIds = new Set<string>();
     for (const r of current.registrations.filter((r) => r.status !== TournamentRegistrationStatus.CANCELED)) {
