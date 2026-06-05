@@ -94,7 +94,9 @@ async function main() {
   console.log(`admin encontrado: si (${admin.email})`);
 
   const tournaments = await prisma.tournament.findMany({
-    where: { createdById: admin.id },
+    where: {
+      OR: [{ createdById: admin.id }, { title: { contains: TARGET_TITLE, mode: 'insensitive' } }, { slug: { contains: 'torneo-prueba', mode: 'insensitive' } }],
+    },
     select: {
       id: true,
       title: true,
