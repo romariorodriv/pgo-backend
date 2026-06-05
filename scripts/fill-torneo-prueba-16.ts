@@ -116,6 +116,7 @@ async function main() {
 
   let tournament = exact.length === 1 ? exact[0] : null;
   if (!tournament && exact.length === 0 && similar.length === 1) tournament = similar[0];
+  if (!tournament && tournaments.length === 1) tournament = tournaments[0];
 
   if (exact.length > 1 || (!tournament && similar.length > 1)) {
     console.log(`torneo ambiguo para "${TARGET_TITLE}". Torneos del admin:`);
