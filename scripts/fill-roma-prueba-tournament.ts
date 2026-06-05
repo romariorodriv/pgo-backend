@@ -1,6 +1,6 @@
 import 'dotenv/config';
 import bcrypt from 'bcrypt';
-import { PrismaClient, Prisma, TournamentRegistrationMode, TournamentRegistrationStatus, ExperienceLevel } from '@prisma/client';
+import { Prisma, PrismaClient, TournamentRegistrationMode, TournamentRegistrationStatus, ExperienceLevel } from '@prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
 
 const connectionString = process.env.DATABASE_URL;
@@ -85,18 +85,9 @@ async function ensureDemoUser(tx: Prisma.TransactionClient, index: number) {
       name,
       email,
       passwordHash,
-      allowMatchInvites: true,
       profile: {
         create: {
           category: DEMO_CATEGORY,
-          categoryOrigin: 'manual',
-          categoryIsProvisional: false,
-          categorySuggested: DEMO_CATEGORY,
-          categoryPreliminary: DEMO_CATEGORY,
-          categoryMaxApplied: DEMO_CATEGORY,
-          categoryScore: 0,
-          categoryQuizAnswers: Prisma.JsonNull,
-          hasCompletedInitialOnboarding: true,
           preferredClub: DEMO_CLUB,
           preferredSide: DEMO_SIDE,
           experienceLevel: DEMO_EXPERIENCE,
@@ -105,33 +96,16 @@ async function ensureDemoUser(tx: Prisma.TransactionClient, index: number) {
     },
     update: {
       name,
-      allowMatchInvites: true,
       profile: {
         upsert: {
           create: {
             category: DEMO_CATEGORY,
-            categoryOrigin: 'manual',
-            categoryIsProvisional: false,
-            categorySuggested: DEMO_CATEGORY,
-            categoryPreliminary: DEMO_CATEGORY,
-            categoryMaxApplied: DEMO_CATEGORY,
-            categoryScore: 0,
-            categoryQuizAnswers: Prisma.JsonNull,
-            hasCompletedInitialOnboarding: true,
             preferredClub: DEMO_CLUB,
             preferredSide: DEMO_SIDE,
             experienceLevel: DEMO_EXPERIENCE,
           },
           update: {
             category: DEMO_CATEGORY,
-            categoryOrigin: 'manual',
-            categoryIsProvisional: false,
-            categorySuggested: DEMO_CATEGORY,
-            categoryPreliminary: DEMO_CATEGORY,
-            categoryMaxApplied: DEMO_CATEGORY,
-            categoryScore: 0,
-            categoryQuizAnswers: Prisma.JsonNull,
-            hasCompletedInitialOnboarding: true,
             preferredClub: DEMO_CLUB,
             preferredSide: DEMO_SIDE,
             experienceLevel: DEMO_EXPERIENCE,
