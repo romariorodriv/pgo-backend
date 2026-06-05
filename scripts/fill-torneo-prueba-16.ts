@@ -8,7 +8,7 @@ if (!connectionString) throw new Error('DATABASE_URL no esta definida en el ento
 
 const prisma = new PrismaClient({ adapter: new PrismaPg({ connectionString }) });
 
-const ADMIN_EMAIL = 'tomascastmros@gmail.com';
+const ADMIN_EMAIL = 'aromhr2106@gmail.com';
 const TARGET_TITLE = 'torneo prueba';
 const TARGET_TOTAL = 16;
 const DEMO_PASSWORD = 'Demo12345*';
