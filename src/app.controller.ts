@@ -9,4 +9,9 @@ export class AppController {
   getHealth(): { status: string; message: string } {
     return this.appService.getHealth();
   }
+
+  @Get('health')
+  getReadiness(): { ok: true; timestamp: string; uptime: number } {
+    return this.appService.getReadiness();
+  }
 }

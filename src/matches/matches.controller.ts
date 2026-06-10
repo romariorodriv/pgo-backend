@@ -29,6 +29,7 @@ export class MatchesController {
       body.matchType,
       body.participantIds,
       body.photoUrl,
+      body.openMatchAlertId,
     );
   }
 

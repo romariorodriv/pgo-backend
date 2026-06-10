@@ -3,6 +3,7 @@ import {
   IsEnum,
   IsDateString,
   IsInt,
+  IsNotEmpty,
   IsOptional,
   IsString,
   Min,
@@ -11,9 +12,11 @@ import { TournamentStatus } from '@prisma/client';
 
 export class CreateTournamentDto {
   @IsString()
+  @IsNotEmpty()
   title: string;
 
   @IsString()
+  @IsNotEmpty()
   tournamentType: string;
 
   @IsOptional()
@@ -25,12 +28,15 @@ export class CreateTournamentDto {
   playerCapacity: number;
 
   @IsString()
+  @IsNotEmpty()
   modality: string;
 
   @IsString()
+  @IsNotEmpty()
   format: string;
 
   @IsString()
+  @IsNotEmpty()
   location: string;
 
   @IsOptional()
@@ -38,15 +44,18 @@ export class CreateTournamentDto {
   address?: string;
 
   @IsString()
+  @IsNotEmpty()
   city: string;
 
   @IsString()
+  @IsNotEmpty()
   district: string;
 
   @IsDateString()
   startsAt: string;
 
   @IsString()
+  @IsNotEmpty()
   prize: string;
 
   @IsInt()
@@ -54,6 +63,7 @@ export class CreateTournamentDto {
   entryFee: number;
 
   @IsString()
+  @IsNotEmpty()
   category: string;
 
   @IsOptional()

@@ -64,6 +64,7 @@ enum FriendshipStatus {
 enum OpenMatchAlertStatus {
   OPEN
   FULL
+  COMPLETED
   CANCELED
 }
 
@@ -74,27 +75,39 @@ enum OpenMatchCoordinationStatus {
   CANNOT_GO
 }
 
+enum OpenMatchInvitationStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
+  CANCELED
+}
+
 model User {
-  id                               String                   @id @default(uuid())
+  id                               String                        @id @default(uuid())
   name                             String
-  email                            String                   @unique
-  googleId                         String?                  @unique @map("google_id")
-  passwordHash                     String                   @map("password_hash")
-  createdAt                        DateTime                 @default(now()) @map("created_at")
-  updatedAt                        DateTime                 @updatedAt @map("updated_at")
+  email                            String                        @unique
+  googleId                         String?                       @unique @map("google_id")
+  passwordHash                     String                        @map("password_hash")
+  isActive                         Boolean                       @default(true) @map("is_active")
+  allowMatchInvites                Boolean                       @default(true) @map("allow_match_invites")
+  createdAt                        DateTime                      @default(now()) @map("created_at")
+  updatedAt                        DateTime                      @updatedAt @map("updated_at")
   profile                          Profile?
   createdMatches                   Match[]
   createdTournaments               Tournament[]
   matchParticipations              MatchParticipant[]
-  tournamentRegistrations          TournamentRegistration[] @relation("TournamentRegistrant")
-  partneredTournamentRegistrations TournamentRegistration[] @relation("TournamentPartner")
-  sentFriendships                  Friendship[]             @relation("FriendshipRequester")
-  receivedFriendships              Friendship[]             @relation("FriendshipAddressee")
-  userAFriendships                 Friendship[]             @relation("FriendshipUserA")
-  userBFriendships                 Friendship[]             @relation("FriendshipUserB")
+  tournamentRegistrations          TournamentRegistration[]      @relation("TournamentRegistrant")
+  partneredTournamentRegistrations TournamentRegistration[]      @relation("TournamentPartner")
+  sentFriendships                  Friendship[]                  @relation("FriendshipRequester")
+  receivedFriendships              Friendship[]                  @relation("FriendshipAddressee")
+  userAFriendships                 Friendship[]                  @relation("FriendshipUserA")
+  userBFriendships                 Friendship[]                  @relation("FriendshipUserB")
   pushDeviceTokens                 PushDeviceToken[]
-  organizedOpenMatchAlerts         OpenMatchAlert[]         @relation("OpenMatchOrganizer")
+  notifications                    AppNotification[]
+  supportReports                   SupportReport[]
+  organizedOpenMatchAlerts         OpenMatchAlert[]              @relation("OpenMatchOrganizer")
   openMatchJoins                   OpenMatchParticipant[]
+  openMatchInvitations             OpenMatchInvitation[]         @relation("OpenMatchInvitee")
   openMatchCoordinationUpdates     OpenMatchCoordinationUpdate[]
 
   @@map("users")
@@ -115,26 +128,67 @@ model PushDeviceToken {
   @@map("push_device_tokens")
 }
 
+model AppNotification {
+  id        String    @id @default(uuid())
+  userId    String    @map("user_id")
+  type      String
+  title     String
+  body      String
+  data      Json?
+  readAt    DateTime? @map("read_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([userId, readAt])
+  @@map("app_notifications")
+}
+
+model SupportReport {
+  id              String   @id @default(uuid())
+  userId          String   @map("user_id")
+  type            String
+  subject         String
+  description     String
+  screenshotLabel String?  @map("screenshot_label")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@map("support_reports")
+}
+
 model Profile {
-  id                       String           @id @default(uuid())
-  userId                   String           @unique @map("user_id")
-  user                     User             @relation(fields: [userId], references: [id])
-  photoUrl                 String?          @map("photo_url")
-  experiencePoints         Int              @default(0) @map("experience_points")
-  category                 String?
-  preferredClub            String?          @map("preferred_club")
-  preferredSide            String?          @map("preferred_side")
-  racketModel              String?          @map("racket_model")
-  experienceLevel          ExperienceLevel? @map("experience_level")
-  rankingPosition          Int              @default(0) @map("ranking_position")
-  wins                     Int              @default(0)
-  weeklyStreak             Int              @default(0) @map("weekly_streak")
-  friendsCount             Int              @default(0) @map("friends_count")
-  followersCount           Int              @default(0) @map("followers_count")
-  followingCount           Int              @default(0) @map("following_count")
-  socialNotificationsCount Int              @default(0) @map("social_notifications_count")
-  createdAt                DateTime         @default(now()) @map("created_at")
-  updatedAt                DateTime         @updatedAt @map("updated_at")
+  id                            String           @id @default(uuid())
+  userId                        String           @unique @map("user_id")
+  user                          User             @relation(fields: [userId], references: [id])
+  photoUrl                      String?          @map("photo_url")
+  experiencePoints              Int              @default(0) @map("experience_points")
+  category                      String?
+  categorySuggested             String?          @map("category_suggested")
+  categoryPreliminary           String?          @map("category_preliminary")
+  categoryMaxApplied            String?          @map("category_max_applied")
+  categoryScore                 Int?             @map("category_score")
+  categoryQuizAnswers           Json?            @map("category_quiz_answers")
+  categoryIsProvisional         Boolean          @default(false) @map("category_is_provisional")
+  categoryOrigin                String?          @map("category_origin")
+  preferredClub                 String?          @map("preferred_club")
+  preferredSide                 String?          @map("preferred_side")
+  racketModel                   String?          @map("racket_model")
+  experienceLevel               ExperienceLevel? @map("experience_level")
+  rankingPosition               Int              @default(0) @map("ranking_position")
+  wins                          Int              @default(0)
+  weeklyStreak                  Int              @default(0) @map("weekly_streak")
+  friendsCount                  Int              @default(0) @map("friends_count")
+  followersCount                Int              @default(0) @map("followers_count")
+  followingCount                Int              @default(0) @map("following_count")
+  socialNotificationsCount      Int              @default(0) @map("social_notifications_count")
+  hasSeenHomeGuide              Boolean          @default(false) @map("has_seen_home_guide")
+  hasCompletedInitialOnboarding Boolean          @default(false) @map("has_completed_initial_onboarding")
+  createdAt                     DateTime         @default(now()) @map("created_at")
+  updatedAt                     DateTime         @updatedAt @map("updated_at")
 
   @@map("profiles")
 }
@@ -163,21 +217,22 @@ model Friendship {
 }
 
 model Match {
-  id           String             @id @default(uuid())
-  createdById  String
-  createdBy    User               @relation(fields: [createdById], references: [id])
-  clubName     String
-  playedAt     DateTime
-  matchType    MatchType
-  status       MatchStatus
-  photoUrl     String?            @map("photo_url")
-  description  String?
-  winnerTeam   Int?               @map("winner_team")
-  games        Json?
-  xpAwardedAt  DateTime?          @map("xp_awarded_at")
-  createdAt    DateTime           @default(now())
-  updatedAt    DateTime           @updatedAt
-  participants MatchParticipant[]
+  id              String             @id @default(uuid())
+  createdById     String
+  createdBy       User               @relation(fields: [createdById], references: [id])
+  clubName        String
+  playedAt        DateTime
+  matchType       MatchType
+  status          MatchStatus
+  photoUrl        String?            @map("photo_url")
+  description     String?
+  winnerTeam      Int?               @map("winner_team")
+  games           Json?
+  xpAwardedAt     DateTime?          @map("xp_awarded_at")
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+  participants    MatchParticipant[]
+  openMatchResult OpenMatchAlert?    @relation("OpenMatchResult")
 
   @@map("matches")
 }
@@ -198,23 +253,27 @@ model MatchParticipant {
 }
 
 model OpenMatchAlert {
-  id               String                 @id @default(uuid())
-  organizerId      String                 @map("organizer_id")
-  organizer        User                   @relation("OpenMatchOrganizer", fields: [organizerId], references: [id], onDelete: Cascade)
-  category         String
-  format           String
-  startsAt         DateTime               @map("starts_at")
-  club             String
-  district         String
-  courtStatus      String                 @map("court_status")
-  missingPlayers   Int                    @map("missing_players")
-  costPerPerson    Int                    @map("cost_per_person")
-  paymentLabel     String                 @map("payment_label")
-  comment          String?
-  status           OpenMatchAlertStatus   @default(OPEN)
-  createdAt        DateTime               @default(now()) @map("created_at")
-  updatedAt        DateTime               @updatedAt @map("updated_at")
-  participants     OpenMatchParticipant[]
+  id                  String                        @id @default(uuid())
+  organizerId         String                        @map("organizer_id")
+  organizer           User                          @relation("OpenMatchOrganizer", fields: [organizerId], references: [id], onDelete: Cascade)
+  category            String
+  format              String
+  startsAt            DateTime                      @map("starts_at")
+  club                String
+  district            String
+  courtStatus         String                        @map("court_status")
+  missingPlayers      Int                           @map("missing_players")
+  costPerPerson       Int                           @map("cost_per_person")
+  paymentLabel        String                        @map("payment_label")
+  comment             String?
+  status              OpenMatchAlertStatus          @default(OPEN)
+  resultMatchId       String?                       @unique @map("result_match_id")
+  completedAt         DateTime?                     @map("completed_at")
+  createdAt           DateTime                      @default(now()) @map("created_at")
+  updatedAt           DateTime                      @updatedAt @map("updated_at")
+  resultMatch         Match?                        @relation("OpenMatchResult", fields: [resultMatchId], references: [id], onDelete: SetNull)
+  participants        OpenMatchParticipant[]
+  invitations         OpenMatchInvitation[]
   coordinationUpdates OpenMatchCoordinationUpdate[]
 
   @@index([status, startsAt])
@@ -235,6 +294,23 @@ model OpenMatchCoordinationUpdate {
   @@index([alertId, createdAt])
   @@index([userId])
   @@map("open_match_coordination_updates")
+}
+
+model OpenMatchInvitation {
+  id          String                    @id @default(uuid())
+  alertId     String                    @map("alert_id")
+  inviteeId   String                    @map("invitee_id")
+  status      OpenMatchInvitationStatus @default(PENDING)
+  respondedAt DateTime?                 @map("responded_at")
+  createdAt   DateTime                  @default(now()) @map("created_at")
+  updatedAt   DateTime                  @updatedAt @map("updated_at")
+  alert       OpenMatchAlert            @relation(fields: [alertId], references: [id], onDelete: Cascade)
+  invitee     User                      @relation("OpenMatchInvitee", fields: [inviteeId], references: [id], onDelete: Cascade)
+
+  @@unique([alertId, inviteeId])
+  @@index([inviteeId, status])
+  @@index([alertId, status])
+  @@map("open_match_invitations")
 }
 
 model OpenMatchParticipant {

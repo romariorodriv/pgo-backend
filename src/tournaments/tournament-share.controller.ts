@@ -42,7 +42,7 @@ export class TournamentShareController {
   <meta property="og:image:height" content="630">
   <meta property="og:image:alt" content="${this.escapeHtml(tournament.title)}">
   <meta property="al:android:url" content="${this.escapeHtml(appUrl)}">
-  <meta property="al:android:package" content="com.example.pgo">
+  <meta property="al:android:package" content="com.pgo.app">
   <meta property="al:android:app_name" content="PGO">
   <meta property="al:web:url" content="${this.escapeHtml(publicUrl)}">
   <meta name="twitter:card" content="summary_large_image">
@@ -133,7 +133,7 @@ export class TournamentShareController {
       `intent://tournaments/${id}`,
       '#Intent',
       'scheme=pgo',
-      'package=com.example.pgo',
+      'package=com.pgo.app',
       `S.browser_fallback_url=${encodeURIComponent(fallbackUrl)}`,
       'end',
     ].join(';');

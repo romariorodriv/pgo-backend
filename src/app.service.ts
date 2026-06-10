@@ -8,4 +8,12 @@ export class AppService {
       message: 'PGO backend running',
     };
   }
+
+  getReadiness(): { ok: true; timestamp: string; uptime: number } {
+    return {
+      ok: true,
+      timestamp: new Date().toISOString(),
+      uptime: process.uptime(),
+    };
+  }
 }

@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   Patch,
@@ -129,6 +130,24 @@ export class TournamentsController {
     @CurrentUser() user: AuthenticatedUser,
   ) {
     return this.tournamentsService.deleteBracket(id, user.id);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Delete(':id')
+  deleteTournament(
+    @Param('id') id: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.tournamentsService.deleteTournament(id, user.id);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Patch(':id/finalize')
+  finalizeTournament(
+    @Param('id') id: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.tournamentsService.finalizeTournament(id, user.id);
   }
 
   @UseGuards(JwtAuthGuard)

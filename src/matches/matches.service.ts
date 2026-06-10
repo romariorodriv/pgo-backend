@@ -4,7 +4,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { MatchType } from '@prisma/client';
+import { MatchType, OpenMatchAlertStatus } from '@prisma/client';
 import { NotificationsService } from '../notifications/notifications.service';
 
 @Injectable()
@@ -43,6 +43,7 @@ export class MatchesService {
     matchType: MatchType,
     participantIds: string[],
     photoUrl?: string,
+    openMatchAlertId?: string,
   ) {
     const uniqueParticipantIds = [...new Set(participantIds)];
 
@@ -59,6 +60,43 @@ export class MatchesService {
     }
 
     const createdMatch = await this.prisma.$transaction(async (tx) => {
+      if (openMatchAlertId) {
+        const alert = await tx.openMatchAlert.findUnique({
+          where: { id: openMatchAlertId },
+          include: { participants: true },
+        });
+
+        if (!alert || alert.status === OpenMatchAlertStatus.CANCELED) {
+          throw new NotFoundException('Partido abierto no encontrado');
+        }
+
+        if (alert.status === OpenMatchAlertStatus.COMPLETED) {
+          throw new BadRequestException(
+            'Este partido abierto ya tiene resultado registrado',
+          );
+        }
+
+        if (alert.resultMatchId) {
+          throw new BadRequestException(
+            'Este partido abierto ya tiene un match asociado',
+          );
+        }
+
+        const alertParticipantIds = [
+          alert.organizerId,
+          ...alert.participants.map((participant) => participant.userId),
+        ];
+        const sameParticipants =
+          alertParticipantIds.length === uniqueParticipantIds.length &&
+          alertParticipantIds.every((id) => uniqueParticipantIds.includes(id));
+
+        if (!sameParticipants || !alertParticipantIds.includes(createdById)) {
+          throw new BadRequestException(
+            'Solo los jugadores del partido abierto pueden registrar resultado',
+          );
+        }
+      }
+
       const participantUsers = await tx.user.count({
         where: {
           id: {
@@ -73,7 +111,7 @@ export class MatchesService {
         );
       }
 
-      return tx.match.create({
+      const match = await tx.match.create({
         data: {
           createdById,
           clubName,
@@ -91,6 +129,15 @@ export class MatchesService {
         },
         include: this.publicParticipantsInclude,
       });
+
+      if (openMatchAlertId) {
+        await tx.openMatchAlert.update({
+          where: { id: openMatchAlertId },
+          data: { resultMatchId: match.id },
+        });
+      }
+
+      return match;
     });
 
     const recipients = uniqueParticipantIds.filter((id) => id !== createdById);
@@ -140,15 +187,30 @@ export class MatchesService {
       throw new NotFoundException('Match no encontrado');
     }
 
-    return this.prisma.match.update({
-      where: { id: matchId },
-      data: {
-        playedAt,
-        winnerTeam,
-        games,
-        status: 'COMPLETED',
-      },
-      include: this.publicParticipantsInclude,
+    return this.prisma.$transaction(async (tx) => {
+      const updated = await tx.match.update({
+        where: { id: matchId },
+        data: {
+          playedAt,
+          winnerTeam,
+          games,
+          status: 'COMPLETED',
+        },
+        include: this.publicParticipantsInclude,
+      });
+
+      await tx.openMatchAlert.updateMany({
+        where: {
+          resultMatchId: matchId,
+          status: { not: OpenMatchAlertStatus.COMPLETED },
+        },
+        data: {
+          status: OpenMatchAlertStatus.COMPLETED,
+          completedAt: new Date(),
+        },
+      });
+
+      return updated;
     });
   }
 

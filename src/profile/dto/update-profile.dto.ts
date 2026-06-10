@@ -1,6 +1,9 @@
 import { ExperienceLevel } from '@prisma/client';
 import {
   IsEnum,
+  IsBoolean,
+  IsInt,
+  IsObject,
   IsOptional,
   IsString,
   MaxLength,
@@ -24,6 +27,34 @@ export class UpdateProfileDto {
 
   @IsOptional()
   @IsString()
+  categorySuggested?: string;
+
+  @IsOptional()
+  @IsString()
+  categoryPreliminary?: string;
+
+  @IsOptional()
+  @IsString()
+  categoryMaxApplied?: string;
+
+  @IsOptional()
+  @IsInt()
+  categoryScore?: number;
+
+  @IsOptional()
+  @IsObject()
+  categoryQuizAnswers?: Record<string, unknown>;
+
+  @IsOptional()
+  @IsBoolean()
+  categoryIsProvisional?: boolean;
+
+  @IsOptional()
+  @IsString()
+  categoryOrigin?: string;
+
+  @IsOptional()
+  @IsString()
   preferredClub?: string;
 
   @IsOptional()
@@ -37,4 +68,16 @@ export class UpdateProfileDto {
   @IsOptional()
   @IsEnum(ExperienceLevel)
   experienceLevel?: ExperienceLevel;
+
+  @IsOptional()
+  @IsBoolean()
+  hasSeenHomeGuide?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  hasCompletedInitialOnboarding?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  allowMatchInvites?: boolean;
 }

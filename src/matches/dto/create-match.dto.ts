@@ -23,6 +23,10 @@ export class CreateMatchDto {
   @IsString()
   photoUrl?: string;
 
+  @IsOptional()
+  @IsUUID('4')
+  openMatchAlertId?: string;
+
   @ArrayMinSize(4)
   @ArrayMaxSize(4)
   @IsUUID('4', { each: true })

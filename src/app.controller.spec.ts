@@ -21,5 +21,9 @@ describe('AppController', () => {
         message: 'PGO backend running',
       });
     });
+
+    it('should return readiness info', () => {
+      expect(appController.getReadiness().ok).toBe(true);
+    });
   });
 });

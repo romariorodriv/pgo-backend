@@ -56,6 +56,8 @@ export class UsersService {
                   select: {
                     id: true,
                     name: true,
+                    isActive: true,
+                    allowMatchInvites: true,
                     profile: {
                       select: {
                         photoUrl: true,
@@ -83,6 +85,8 @@ export class UsersService {
     const suggestions: Array<{
       id: string;
       name: string;
+      isActive: boolean;
+      allowMatchInvites: boolean;
       profile: {
         photoUrl: string | null;
         category: string | null;
@@ -111,6 +115,7 @@ export class UsersService {
       const connection = statuses.get(user.id);
       return {
         ...user,
+        allowsMatchInvites: user.allowMatchInvites,
         friendshipId: connection?.id ?? null,
         friendshipStatus: connection?.status ?? null,
       };
@@ -145,6 +150,8 @@ export class UsersService {
         id: true,
         name: true,
         email: true,
+        isActive: true,
+        allowMatchInvites: true,
         profile: {
           select: {
             photoUrl: true,
@@ -167,6 +174,7 @@ export class UsersService {
       const connection = statuses.get(user.id);
       return {
         ...user,
+        allowsMatchInvites: user.allowMatchInvites,
         friendshipId: connection?.id ?? null,
         friendshipStatus: connection?.status ?? null,
       };

@@ -1,4 +1,14 @@
-import { Body, Controller, Get, Param, Patch, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  Patch,
+  Req,
+  UseGuards,
+} from '@nestjs/common';
+import { randomUUID } from 'crypto';
+import type { Request } from 'express';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
@@ -35,7 +45,13 @@ export class ProfileController {
   updateMyProfile(
     @CurrentUser() user: AuthenticatedUser,
     @Body() updateProfileDto: UpdateProfileDto,
+    @Req() request: Request,
   ) {
-    return this.profileService.updateMyProfile(user.id, updateProfileDto);
+    const requestId = request.header('x-request-id')?.trim() || randomUUID();
+    return this.profileService.updateMyProfile(
+      user?.id,
+      updateProfileDto,
+      requestId,
+    );
   }
 }

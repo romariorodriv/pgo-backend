@@ -1,6 +1,8 @@
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
+  InternalServerErrorException,
   Logger,
   NotFoundException,
 } from '@nestjs/common';
@@ -83,92 +85,243 @@ export class ProfileService {
     };
   }
 
-  async updateMyProfile(userId: string, updateProfileDto: UpdateProfileDto) {
-    const { name, allowMatchInvites, ...profileData } = updateProfileDto;
-    this.logger.debug(
-      `updateMyProfile userId=${userId} fields=${Object.keys(updateProfileDto).join(',')}`,
-    );
-    const trimmedName = name?.trim();
-    const currentProfile = await this.prisma.profile.findUnique({
-      where: { userId },
-    });
-    const profileUpdateData = {
-      ...profileData,
-      ...(profileData.categoryQuizAnswers !== undefined
-        ? {
-            categoryQuizAnswers:
-              profileData.categoryQuizAnswers as Prisma.InputJsonValue,
-          }
-        : {}),
-    } as Prisma.ProfileUncheckedUpdateInput;
-    const mergedProfileState = {
-      category: profileData.category ?? currentProfile?.category ?? null,
-      categoryOrigin:
-        profileData.categoryOrigin ?? currentProfile?.categoryOrigin ?? null,
-      categoryIsProvisional:
-        profileData.categoryIsProvisional ??
-        currentProfile?.categoryIsProvisional ??
-        false,
-      categorySuggested:
-        profileData.categorySuggested ??
-        currentProfile?.categorySuggested ??
-        null,
-      categoryPreliminary:
-        profileData.categoryPreliminary ??
-        currentProfile?.categoryPreliminary ??
-        null,
-      categoryMaxApplied:
-        profileData.categoryMaxApplied ??
-        currentProfile?.categoryMaxApplied ??
-        null,
-      categoryScore:
-        profileData.categoryScore ?? currentProfile?.categoryScore ?? null,
-      categoryQuizAnswers:
-        profileData.categoryQuizAnswers ??
-        currentProfile?.categoryQuizAnswers ??
-        null,
-      hasCompletedInitialOnboarding:
-        profileData.hasCompletedInitialOnboarding ??
-        currentProfile?.hasCompletedInitialOnboarding ??
-        false,
-    };
-
-    if (
-      mergedProfileState.hasCompletedInitialOnboarding &&
-      !this.hasEnoughInitialCategoryEvidence(mergedProfileState)
-    ) {
+  async updateMyProfile(
+    userId: string | undefined,
+    updateProfileDto: UpdateProfileDto,
+    requestId = 'untracked',
+  ) {
+    if (!userId) {
       this.logger.warn(
-        `updateMyProfile validation_failed userId=${userId} fields=${Object.keys(profileData).join(',')}`,
+        `profile_update requestId=${requestId} userId_present=false endpoint=PATCH_/profile/me`,
       );
-      throw new BadRequestException(
-        'No se puede marcar onboarding completado sin categoria o datos del quiz.',
-      );
+      throw new NotFoundException({
+        code: 'user_not_found',
+        message: 'Usuario no encontrado',
+        requestId,
+      });
     }
 
-    await this.prisma.$transaction(async (tx) => {
-      if (trimmedName || allowMatchInvites !== undefined) {
-        await tx.user.update({
-          where: { id: userId },
-          data: {
-            ...(trimmedName ? { name: trimmedName } : {}),
-            ...(allowMatchInvites !== undefined ? { allowMatchInvites } : {}),
-          },
+    const { name, allowMatchInvites, photoUrl, ...rawProfileData } =
+      updateProfileDto as any;
+    this.logger.log(
+      `profile_update requestId=${requestId} userId_present=true endpoint=PATCH_/profile/me ${this.summarizePayload(updateProfileDto)}`,
+    );
+    const trimmedName = name?.trim();
+    const normalizedPhotoUrl = this.normalizePhotoUrl(photoUrl);
+    if (photoUrl !== undefined && normalizedPhotoUrl === undefined) {
+      this.logger.warn(
+        `profile_update_photo_ignored requestId=${requestId} type=${typeof photoUrl} length=${typeof photoUrl === 'string' ? photoUrl.length : 0}`,
+      );
+    }
+    const profileData = this.removeUndefined({
+      ...rawProfileData,
+      ...(normalizedPhotoUrl !== undefined
+        ? { photoUrl: normalizedPhotoUrl }
+        : {}),
+    }) as any;
+    try {
+      const userExists = await this.prisma.user.findUnique({
+        where: { id: userId },
+        select: { id: true },
+      });
+      if (!userExists) {
+        throw new NotFoundException({
+          code: 'user_not_found',
+          message: 'Usuario no encontrado',
+          requestId,
         });
       }
 
-      if (Object.keys(profileUpdateData).length > 0) {
-        await tx.profile.upsert({
-          where: { userId },
-          create: {
-            userId,
-            ...profileUpdateData,
-          } as Prisma.ProfileUncheckedCreateInput,
-          update: profileUpdateData,
+      const currentProfile = (await this.prisma.profile.findUnique({
+        where: { userId },
+      })) as any;
+      const profileUpdateData = {
+        ...profileData,
+        ...(profileData.categoryQuizAnswers !== undefined
+          ? {
+              categoryQuizAnswers:
+                profileData.categoryQuizAnswers as Prisma.InputJsonValue,
+            }
+          : {}),
+      } as any;
+      const mergedProfileState = {
+        category: profileData.category ?? currentProfile?.category ?? null,
+        categoryOrigin:
+          profileData.categoryOrigin ?? currentProfile?.categoryOrigin ?? null,
+        categoryIsProvisional:
+          profileData.categoryIsProvisional ??
+          currentProfile?.categoryIsProvisional ??
+          false,
+        categorySuggested:
+          profileData.categorySuggested ??
+          currentProfile?.categorySuggested ??
+          null,
+        categoryPreliminary:
+          profileData.categoryPreliminary ??
+          currentProfile?.categoryPreliminary ??
+          null,
+        categoryMaxApplied:
+          profileData.categoryMaxApplied ??
+          currentProfile?.categoryMaxApplied ??
+          null,
+        categoryScore:
+          profileData.categoryScore ?? currentProfile?.categoryScore ?? null,
+        categoryQuizAnswers:
+          profileData.categoryQuizAnswers ??
+          currentProfile?.categoryQuizAnswers ??
+          null,
+        hasCompletedInitialOnboarding:
+          profileData.hasCompletedInitialOnboarding ??
+          currentProfile?.hasCompletedInitialOnboarding ??
+          false,
+      };
+
+      if (
+        mergedProfileState.hasCompletedInitialOnboarding &&
+        !this.hasEnoughInitialCategoryEvidence(mergedProfileState)
+      ) {
+        throw new BadRequestException({
+          code: 'invalid_profile_payload',
+          message:
+            'No se puede marcar onboarding completado sin categoria o datos del quiz.',
+          requestId,
         });
       }
-    });
 
-    return this.getMyProfile(userId);
+      await this.prisma.$transaction(async (tx) => {
+        if (trimmedName || allowMatchInvites !== undefined) {
+          await tx.user.update({
+            where: { id: userId },
+            data: {
+              ...(trimmedName ? { name: trimmedName } : {}),
+              ...(allowMatchInvites !== undefined ? { allowMatchInvites } : {}),
+            } as any,
+          });
+        }
+
+        if (Object.keys(profileUpdateData).length > 0) {
+          await tx.profile.upsert({
+            where: { userId },
+            create: {
+              userId,
+              ...profileUpdateData,
+            } as Prisma.ProfileUncheckedCreateInput,
+            update: profileUpdateData,
+          });
+        }
+      });
+
+      this.logger.log(`profile_update_success requestId=${requestId}`);
+      return this.getMyProfile(userId);
+    } catch (error) {
+      if (
+        error instanceof BadRequestException ||
+        error instanceof NotFoundException ||
+        error instanceof ConflictException
+      ) {
+        throw error;
+      }
+      this.logProfileUpdateError(error, requestId);
+
+      if (error instanceof Prisma.PrismaClientKnownRequestError) {
+        if (error.code === 'P2002') {
+          throw new ConflictException({
+            code: 'profile_conflict',
+            message: 'El perfil tiene datos que entran en conflicto.',
+            requestId,
+          });
+        }
+        if (error.code === 'P2003' || error.code === 'P2025') {
+          throw new NotFoundException({
+            code: 'user_not_found',
+            message: 'Usuario no encontrado',
+            requestId,
+          });
+        }
+      }
+      if (error instanceof Prisma.PrismaClientValidationError) {
+        throw new BadRequestException({
+          code: 'invalid_profile_payload',
+          message:
+            'El servidor no pudo validar los campos enviados para el perfil.',
+          requestId,
+        });
+      }
+
+      throw new InternalServerErrorException({
+        code: 'profile_update_failed',
+        message: 'No se pudo actualizar el perfil.',
+        requestId,
+      });
+    }
+  }
+
+  private summarizePayload(payload: object) {
+    const fields = Object.keys(payload).sort().join(',');
+    const types = Object.entries(payload)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, value]) => {
+        const type = Array.isArray(value)
+          ? 'array'
+          : value === null
+            ? 'null'
+            : typeof value;
+        const length = typeof value === 'string' ? `:${value.length}` : '';
+        return `${key}=${type}${length}`;
+      })
+      .join(',');
+    return `fields=${fields} types=${types}`;
+  }
+
+  private removeUndefined<T extends Record<string, unknown>>(value: T) {
+    return Object.fromEntries(
+      Object.entries(value).filter(([, item]) => item !== undefined),
+    ) as Partial<T>;
+  }
+
+  private normalizePhotoUrl(value: unknown) {
+    if (value === undefined || value === null || value === '') return undefined;
+    if (typeof value !== 'string') return undefined;
+    const trimmed = value.trim();
+    if (trimmed.length === 0 || trimmed.length > 2048) return undefined;
+    try {
+      const url = new URL(trimmed);
+      return url.protocol === 'http:' || url.protocol === 'https:'
+        ? trimmed
+        : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  private logProfileUpdateError(error: unknown, requestId: string) {
+    if (error instanceof Prisma.PrismaClientValidationError) {
+      const message = error.message.replace(/\s+/g, ' ').slice(0, 300);
+      this.logger.error(
+        `profile_update_failed requestId=${requestId} prisma_validation=true message=${message}`,
+        error.stack,
+      );
+      return;
+    }
+    if (error instanceof Prisma.PrismaClientKnownRequestError) {
+      const meta = JSON.stringify(error.meta ?? {}).slice(0, 500);
+      const message = error.message.replace(/\s+/g, ' ').slice(0, 300);
+      this.logger.error(
+        `profile_update_failed requestId=${requestId} prisma_code=${error.code} meta=${meta} message=${message}`,
+        error.stack,
+      );
+      return;
+    }
+
+    const typedError = error as Error;
+    const type = typedError?.constructor?.name ?? typeof error;
+    const message = (typedError?.message ?? String(error))
+      .replace(/\s+/g, ' ')
+      .slice(0, 300);
+    this.logger.error(
+      `profile_update_failed requestId=${requestId} type=${type} message=${message}`,
+      typedError?.stack,
+    );
   }
 
   private hasEnoughInitialCategoryEvidence(state: {
@@ -207,7 +360,9 @@ export class ProfileService {
       return false;
     }
 
-    return Array.isArray(value) ? value.length > 0 : Object.keys(value).length > 0;
+    return Array.isArray(value)
+      ? value.length > 0
+      : Object.keys(value).length > 0;
   }
 
   private async buildProfileResponse(
@@ -225,7 +380,7 @@ export class ProfileService {
       throw new NotFoundException('Usuario no encontrado');
     }
 
-    const profile = await this.ensureProfile(user);
+    const profile = (await this.ensureProfile(user)) as any;
 
     const [
       matchesPlayed,
@@ -286,7 +441,7 @@ export class ProfileService {
       categoryQuizAnswers: profile.categoryQuizAnswers,
       categoryIsProvisional: profile.categoryIsProvisional,
       categoryOrigin: profile.categoryOrigin,
-      allowMatchInvites: user.allowMatchInvites,
+      allowMatchInvites: (user as any).allowMatchInvites,
       isCurrentUser: user.id === viewerUserId,
       matchHistory: recentHistory,
     };

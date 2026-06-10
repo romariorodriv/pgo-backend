@@ -2,8 +2,10 @@ import { Type } from 'class-transformer';
 import {
   IsDateString,
   IsInt,
+  IsArray,
   IsOptional,
   IsString,
+  IsUUID,
   Max,
   Min,
 } from 'class-validator';
@@ -44,4 +46,9 @@ export class CreateOpenMatchAlertDto {
   @IsOptional()
   @IsString()
   comment?: string;
+
+  @IsOptional()
+  @IsArray()
+  @IsUUID('4', { each: true })
+  invitedUserIds?: string[];
 }

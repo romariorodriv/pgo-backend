@@ -44,6 +44,10 @@ export class NotificationsService {
       },
     });
 
+    this.logger.log(
+      `Push token registrado: platform=${device.platform} token=${this.maskPushToken(device.token)}`,
+    );
+
     return {
       id: device.id,
       platform: device.platform,
@@ -59,6 +63,18 @@ export class NotificationsService {
     payload: PushPayload,
     options?: { excludeUserIds?: string[] },
   ) {
+    const recipients = await this.prisma.user.findMany({
+      where:
+        options?.excludeUserIds && options.excludeUserIds.length > 0
+          ? { id: { notIn: options.excludeUserIds } }
+          : undefined,
+      select: { id: true },
+    });
+    await this.createInboxNotifications(
+      recipients.map((recipient) => recipient.id),
+      payload,
+    );
+
     const devices = await this.prisma.pushDeviceToken.findMany({
       where: {
         userId:
@@ -66,13 +82,20 @@ export class NotificationsService {
             ? { notIn: options.excludeUserIds }
             : undefined,
       },
-      select: { token: true },
+      select: { token: true, platform: true },
     });
 
     return this.sendToDevices(devices, payload);
   }
 
   async sendToUsers(userIds: string[], payload: PushPayload) {
+    const uniqueUserIds = [...new Set(userIds.filter(Boolean))];
+    if (uniqueUserIds.length === 0) {
+      return { sent: 0, skipped: false };
+    }
+
+    await this.createInboxNotifications(uniqueUserIds, payload);
+
     if (!this.firebaseApp) {
       this.logger.warn(
         'Firebase Admin no esta configurado. Se omitio el envio push.',
@@ -80,21 +103,85 @@ export class NotificationsService {
       return { sent: 0, skipped: true };
     }
 
-    const uniqueUserIds = [...new Set(userIds.filter(Boolean))];
-    if (uniqueUserIds.length === 0) {
-      return { sent: 0, skipped: false };
-    }
-
     const devices = await this.prisma.pushDeviceToken.findMany({
       where: { userId: { in: uniqueUserIds } },
-      select: { token: true },
+      select: { token: true, platform: true },
     });
 
     return this.sendToDevices(devices, payload);
   }
 
+  async listForUser(userId: string) {
+    const notifications = await this.prisma.appNotification.findMany({
+      where: { userId },
+      orderBy: { createdAt: 'desc' },
+      take: 80,
+    });
+
+    const unreadCount = notifications.filter(
+      (notification) => notification.readAt === null,
+    ).length;
+
+    return {
+      unreadCount,
+      notifications: notifications.map((notification) => ({
+        id: notification.id,
+        type: notification.type,
+        title: notification.title,
+        body: notification.body,
+        data: notification.data ?? {},
+        readAt: notification.readAt,
+        createdAt: notification.createdAt,
+      })),
+    };
+  }
+
+  async markRead(userId: string, notificationId: string) {
+    await this.prisma.appNotification.updateMany({
+      where: { id: notificationId, userId, readAt: null },
+      data: { readAt: new Date() },
+    });
+
+    return { ok: true };
+  }
+
+  async markAllRead(userId: string) {
+    await this.prisma.appNotification.updateMany({
+      where: { userId, readAt: null },
+      data: { readAt: new Date() },
+    });
+
+    return { ok: true };
+  }
+
+  async deleteForUser(userId: string, notificationId: string) {
+    await this.prisma.appNotification.deleteMany({
+      where: { id: notificationId, userId },
+    });
+
+    return { ok: true };
+  }
+
+  private async createInboxNotifications(
+    userIds: string[],
+    payload: PushPayload,
+  ) {
+    const uniqueUserIds = [...new Set(userIds.filter(Boolean))];
+    if (uniqueUserIds.length === 0) return;
+
+    await this.prisma.appNotification.createMany({
+      data: uniqueUserIds.map((userId) => ({
+        userId,
+        type: payload.data?.type ?? 'GENERAL',
+        title: payload.title,
+        body: payload.body,
+        data: payload.data ?? {},
+      })),
+    });
+  }
+
   private async sendToDevices(
-    devices: { token: string }[],
+    devices: { token: string; platform: string }[],
     payload: PushPayload,
   ) {
     if (!this.firebaseApp) {
@@ -127,10 +214,21 @@ export class NotificationsService {
           android: {
             priority: 'high',
             notification: {
-              channelId: 'pgo_default',
+              channelId: 'pgo_default_sound',
               icon: 'ic_pgo_notification',
               color: '#17263A',
-              sound: 'default',
+              sound: 'pgo_notification',
+            },
+          },
+          apns: {
+            headers: {
+              'apns-priority': '10',
+            },
+            payload: {
+              aps: {
+                sound: 'default',
+                badge: 1,
+              },
             },
           },
         });
@@ -141,16 +239,32 @@ export class NotificationsService {
           ...response.responses
             .map((item, itemIndex) => ({
               token: chunk[itemIndex].token,
+              platform: chunk[itemIndex].platform,
               error: item.error?.code,
             }))
             .filter((item) =>
               [
                 'messaging/invalid-registration-token',
                 'messaging/registration-token-not-registered',
+                'messaging/mismatched-credential',
               ].includes(item.error ?? ''),
             )
             .map((item) => item.token),
         );
+        const errorCodes = response.responses
+          .map((item, itemIndex) => ({
+            code: item.error?.code,
+            platform: chunk[itemIndex].platform,
+            token: this.maskPushToken(chunk[itemIndex].token),
+          }))
+          .filter((item) => Boolean(item.code));
+        if (errorCodes.length > 0) {
+          this.logger.warn(
+            `Errores push Firebase: ${errorCodes
+              .map((item) => `${item.platform}:${item.code}:${item.token}`)
+              .join(', ')}`,
+          );
+        }
       }
 
       if (invalidTokens.length > 0) {
@@ -158,6 +272,10 @@ export class NotificationsService {
           where: { token: { in: invalidTokens } },
         });
       }
+
+      this.logger.log(
+        `Push enviado: tokens=${devices.length}, platforms=${this.platformSummary(devices)}, ok=${successCount}, failed=${failureCount}`,
+      );
 
       return {
         sent: successCount,
@@ -197,5 +315,22 @@ export class NotificationsService {
       this.logger.error('No se pudo inicializar Firebase Admin', error);
       return null;
     }
+  }
+
+  private maskPushToken(token: string) {
+    if (!token) return 'empty';
+    if (token.length <= 12) return `${token.slice(0, 2)}...`;
+    return `${token.slice(0, 6)}...${token.slice(-6)}`;
+  }
+
+  private platformSummary(devices: { platform: string }[]) {
+    const counts = devices.reduce<Record<string, number>>((acc, device) => {
+      const platform = device.platform || 'unknown';
+      acc[platform] = (acc[platform] ?? 0) + 1;
+      return acc;
+    }, {});
+    return Object.entries(counts)
+      .map(([platform, count]) => `${platform}:${count}`)
+      .join(',');
   }
 }

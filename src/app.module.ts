@@ -12,6 +12,7 @@ import { NotificationsModule } from './notifications/notifications.module';
 import { SocialModule } from './social/social.module';
 import { TournamentsModule } from './tournaments/tournaments.module';
 import { OpenMatchAlertsModule } from './open-match-alerts/open-match-alerts.module';
+import { SupportModule } from './support/support.module';
 
 @Module({
   imports: [
@@ -27,6 +28,7 @@ import { OpenMatchAlertsModule } from './open-match-alerts/open-match-alerts.mod
     SocialModule,
     TournamentsModule,
     OpenMatchAlertsModule,
+    SupportModule,
   ],
   controllers: [AppController, AppLinksController],
   providers: [AppService],

@@ -1,4 +1,4 @@
-import {
+﻿import {
   BadRequestException,
   ConflictException,
   Injectable,
@@ -110,12 +110,27 @@ export class TournamentsService {
     status: TournamentStatus = TournamentStatus.PUBLISHED,
     registrationsOpen = true,
   ) {
+    this.ensureTournamentCreateInput({
+      title,
+      tournamentType,
+      playerCapacity,
+      modality,
+      format,
+      location,
+      city,
+      district,
+      startsAt,
+      prize,
+      entryFee,
+      category,
+    });
+
+    if (tournamentType.toLowerCase().includes('rey')) {
+      throw new BadRequestException('Rey de la cancha está desactivado');
+    }
+
     const slug = await this.generateUniqueSlug(title);
-    const normalizedPairingMode =
-      tournamentType.toLowerCase().includes('rey') &&
-      pairingMode === 'ROTATING'
-        ? 'ROTATING'
-        : 'FIXED';
+    const normalizedPairingMode = 'FIXED';
 
     const tournament = await this.prisma.tournament.create({
       data: {
@@ -413,8 +428,15 @@ export class TournamentsService {
     );
     const bracketMatches = this.buildBracketMatchesFromTournament(tournament);
 
-    await this.prisma.tournamentMatch.createMany({
-      data: bracketMatches,
+    await this.prisma.$transaction(async (tx) => {
+      await tx.tournament.update({
+        where: { id: tournamentId },
+        data: { registrationsOpen: false },
+      });
+
+      await tx.tournamentMatch.createMany({
+        data: bracketMatches,
+      });
     });
 
     await this.notifyTournamentBracketReady(tournament);
@@ -481,6 +503,53 @@ export class TournamentsService {
     return {
       deletedMatches: result.count,
     };
+  }
+
+  async deleteTournament(tournamentId: string, userId: string) {
+    const tournament = await this.prisma.tournament.findUnique({
+      where: { id: tournamentId },
+      select: { id: true, createdById: true, status: true },
+    });
+
+    if (!tournament) {
+      throw new NotFoundException('Torneo no encontrado');
+    }
+
+    if (tournament.createdById !== userId) {
+      throw new BadRequestException(
+        'Solo el creador puede eliminar este torneo',
+      );
+    }
+
+    if (tournament.status === TournamentStatus.COMPLETED) {
+      throw new BadRequestException('No puedes eliminar un torneo finalizado');
+    }
+
+    const startedMatches = await this.prisma.tournamentMatch.count({
+      where: {
+        tournamentId,
+        OR: [
+          { status: { not: TournamentMatchStatus.PENDING } },
+          { startedAt: { not: null } },
+        ],
+      },
+    });
+
+    if (startedMatches > 0) {
+      throw new BadRequestException(
+        'No puedes eliminar un torneo con partidos iniciados',
+      );
+    }
+
+    await this.prisma.tournament.update({
+      where: { id: tournamentId },
+      data: {
+        status: TournamentStatus.CANCELED,
+        registrationsOpen: false,
+      },
+    });
+
+    return { deleted: true };
   }
 
   private async ensureTournamentReadyForBracketGeneration(
@@ -570,6 +639,7 @@ export class TournamentsService {
 
   async startAdminMatch(tournamentId: string, matchId: string, userId: string) {
     await this.ensureTournamentOwnership(tournamentId, userId);
+    await this.ensureTournamentIsNotCompleted(tournamentId);
     const match = await this.ensureTournamentMatch(tournamentId, matchId);
 
     if (match.status !== TournamentMatchStatus.PENDING) {
@@ -606,6 +676,7 @@ export class TournamentsService {
     matchId: string,
     userId: string,
   ) {
+    await this.ensureTournamentIsNotCompleted(tournamentId);
     const match = await this.ensureParticipantCanManageMatch(
       tournamentId,
       matchId,
@@ -649,8 +720,13 @@ export class TournamentsService {
     score?: string,
   ) {
     await this.ensureTournamentOwnership(tournamentId, userId);
+    await this.ensureTournamentIsNotCompleted(tournamentId);
     const match = await this.ensureTournamentMatch(tournamentId, matchId);
     this.ensureValidWinner(match, winnerLabel);
+    const normalizedScore = this.ensureValidScore(score, {
+      required: false,
+      fallback: match.score,
+    });
 
     const updated = await this.prisma.$transaction(async (tx) => {
       const finishedMatch = await tx.tournamentMatch.update({
@@ -658,7 +734,7 @@ export class TournamentsService {
         data: {
           status: TournamentMatchStatus.FINISHED,
           winnerLabel,
-          score: (score?.trim().length ?? 0) > 0 ? score!.trim() : match.score,
+          score: normalizedScore,
         },
       });
 
@@ -679,6 +755,7 @@ export class TournamentsService {
     winnerLabel: string,
     score?: string,
   ) {
+    await this.ensureTournamentIsNotCompleted(tournamentId);
     const match = await this.ensureParticipantCanManageMatch(
       tournamentId,
       matchId,
@@ -692,10 +769,7 @@ export class TournamentsService {
       );
     }
 
-    const trimmedScore = score?.trim();
-    if (!trimmedScore) {
-      throw new BadRequestException('Ingresa el puntaje final del partido');
-    }
+    const trimmedScore = this.ensureValidScore(score, { required: true });
 
     const updated = await this.prisma.$transaction(async (tx) => {
       const finishedMatch = await tx.tournamentMatch.update({
@@ -725,8 +799,13 @@ export class TournamentsService {
     score?: string,
   ) {
     await this.ensureTournamentOwnership(tournamentId, userId);
+    await this.ensureTournamentIsNotCompleted(tournamentId);
     const match = await this.ensureTournamentMatch(tournamentId, matchId);
     this.ensureValidWinner(match, winnerLabel);
+    const normalizedScore = this.ensureValidScore(score, {
+      required: false,
+      fallback: match.score,
+    });
 
     const updated = await this.prisma.$transaction(async (tx) => {
       const correctedMatch = await tx.tournamentMatch.update({
@@ -734,7 +813,7 @@ export class TournamentsService {
         data: {
           status: TournamentMatchStatus.FINISHED,
           winnerLabel,
-          score: (score?.trim().length ?? 0) > 0 ? score!.trim() : match.score,
+          score: normalizedScore,
         },
       });
 
@@ -767,6 +846,22 @@ export class TournamentsService {
       throw new BadRequestException('Solo el creador puede editar este torneo');
     }
 
+    this.ensureTournamentUpdateInput(body);
+
+    const existingMatches = await this.prisma.tournamentMatch.count({
+      where: { tournamentId },
+    });
+    if (existingMatches > 0 && this.hasCriticalTournamentChanges(body)) {
+      throw new BadRequestException(
+        'No puedes editar campos críticos porque el torneo ya tiene cruces o partidos',
+      );
+    }
+
+    const nextTournamentType = body.tournamentType ?? tournament.tournamentType;
+    if (nextTournamentType.toLowerCase().includes('rey')) {
+      throw new BadRequestException('Rey de la cancha está desactivado');
+    }
+
     await this.prisma.tournament.update({
       where: { id: tournamentId },
       data: {
@@ -777,16 +872,7 @@ export class TournamentsService {
         ...(body.tournamentType != null
           ? { tournamentType: body.tournamentType }
           : {}),
-        ...(body.pairingMode != null
-          ? {
-              pairingMode:
-                (body.tournamentType ?? tournament.tournamentType)
-                  .toLowerCase()
-                  .includes('rey') && body.pairingMode === 'ROTATING'
-                  ? body.pairingMode
-                  : 'FIXED',
-            }
-          : {}),
+        ...(body.pairingMode != null ? { pairingMode: 'FIXED' } : {}),
         ...(body.playerCapacity != null
           ? { playerCapacity: body.playerCapacity }
           : {}),
@@ -853,6 +939,7 @@ export class TournamentsService {
   ) {
     await this.ensureTournamentOpen(tournamentId);
     await this.ensureUserCanRegister(tournamentId, userId);
+    await this.ensureTournamentHasAvailableSlots(tournamentId, 1);
 
     const registration = await this.prisma.tournamentRegistration.create({
       data: {
@@ -901,6 +988,7 @@ export class TournamentsService {
     await this.ensureTournamentOpen(tournamentId);
     await this.ensureUserCanRegister(tournamentId, userId);
     await this.ensureUserCanRegister(tournamentId, partnerUserId);
+    await this.ensureTournamentHasAvailableSlots(tournamentId, 2);
 
     const partnerUser = await this.prisma.user.findUnique({
       where: { id: partnerUserId },
@@ -950,6 +1038,69 @@ export class TournamentsService {
     await this.notifyTournamentAlmostFullIfNeeded(tournamentId);
 
     return registration;
+  }
+
+  async finalizeTournament(tournamentId: string, userId: string) {
+    await this.ensureTournamentOwnership(tournamentId, userId);
+
+    const tournament = await this.prisma.tournament.findUnique({
+      where: { id: tournamentId },
+      select: {
+        id: true,
+        status: true,
+        matches: {
+          select: {
+            id: true,
+            status: true,
+            teamOneLabel: true,
+            teamTwoLabel: true,
+            winnerLabel: true,
+          },
+        },
+      },
+    });
+
+    if (!tournament) {
+      throw new NotFoundException('Torneo no encontrado');
+    }
+
+    if (tournament.status === TournamentStatus.COMPLETED) {
+      return this.findOne(tournamentId);
+    }
+
+    if (tournament.matches.length === 0) {
+      throw new BadRequestException(
+        'No puedes finalizar un torneo sin partidos generados',
+      );
+    }
+
+    const requiredMatches = tournament.matches.filter(
+      (match) =>
+        match.teamOneLabel.trim() !== 'TBD' &&
+        match.teamTwoLabel.trim() !== 'TBD',
+    );
+
+    const hasIncompleteMatch = requiredMatches.some(
+      (match) =>
+        match.status !== TournamentMatchStatus.FINISHED ||
+        !match.winnerLabel?.trim(),
+    );
+
+    if (hasIncompleteMatch) {
+      throw new BadRequestException(
+        'No puedes finalizar el torneo hasta registrar todos los resultados',
+      );
+    }
+
+    await this.prisma.tournament.update({
+      where: { id: tournamentId },
+      data: {
+        status: TournamentStatus.COMPLETED,
+        registrationsOpen: false,
+      },
+    });
+
+    return this.findOne(tournamentId);
   }
 
   async pairAdminRegistrations(
@@ -1232,6 +1383,36 @@ export class TournamentsService {
     return tournament;
   }
 
+  private async ensureTournamentHasAvailableSlots(
+    tournamentId: string,
+    requiredSlots: number,
+  ) {
+    const activePlayers = await this.getActiveTournamentPlayerIds(tournamentId);
+    const availableSlots = await this.getTournamentAvailableSlots(
+      tournamentId,
+      activePlayers.size,
+    );
+
+    if (availableSlots < requiredSlots) {
+      throw new BadRequestException('El torneo ya no tiene cupos disponibles');
+    }
+  }
+
+  private async ensureTournamentIsNotCompleted(tournamentId: string) {
+    const tournament = await this.prisma.tournament.findUnique({
+      where: { id: tournamentId },
+      select: { status: true },
+    });
+
+    if (!tournament) {
+      throw new NotFoundException('Torneo no encontrado');
+    }
+
+    if (tournament.status === TournamentStatus.COMPLETED) {
+      throw new BadRequestException('El torneo ya fue finalizado');
+    }
+  }
+
   private async ensureUserCanRegister(tournamentId: string, userId: string) {
     const existing = await this.prisma.tournamentRegistration.findFirst({
       where: {
@@ -1250,6 +1431,108 @@ export class TournamentsService {
       throw new ConflictException(
         'Ese jugador ya esta inscrito en este torneo',
       );
+    }
+  }
+
+  private hasCriticalTournamentChanges(body: UpdateTournamentDto) {
+    return (
+      body.tournamentType != null ||
+      body.pairingMode != null ||
+      body.playerCapacity != null ||
+      body.modality != null ||
+      body.format != null ||
+      body.location != null ||
+      body.address !== undefined ||
+      body.city != null ||
+      body.district != null ||
+      body.startsAt != null ||
+      body.category != null ||
+      body.status != null
+    );
+  }
+
+  private ensureTournamentCreateInput(input: {
+    title: string;
+    tournamentType: string;
+    playerCapacity: number;
+    modality: string;
+    format: string;
+    location: string;
+    city: string;
+    district: string;
+    startsAt: Date;
+    prize: string;
+    entryFee: number;
+    category: string;
+  }) {
+    const required = [
+      input.title,
+      input.tournamentType,
+      input.modality,
+      input.format,
+      input.location,
+      input.city,
+      input.district,
+      input.prize,
+      input.category,
+    ];
+
+    if (required.some((value) => value.trim().length === 0)) {
+      throw new BadRequestException('Completa los campos obligatorios');
+    }
+
+    if (!['1RA', '2DA', '3RA', '4TA', '5TA', '6TA'].includes(input.category)) {
+      throw new BadRequestException('Selecciona una categorÃ­a vÃ¡lida');
+    }
+
+    if (!Number.isInteger(input.playerCapacity) || input.playerCapacity < 2) {
+      throw new BadRequestException('Los cupos deben ser al menos 2');
+    }
+
+    if (!Number.isInteger(input.entryFee) || input.entryFee < 0) {
+      throw new BadRequestException('El costo de inscripciÃ³n no es vÃ¡lido');
+    }
+
+    if (Number.isNaN(input.startsAt.getTime())) {
+      throw new BadRequestException('La fecha del torneo no es vÃ¡lida');
+    }
+
+    if (input.startsAt.getTime() <= Date.now()) {
+      throw new BadRequestException('La fecha y hora deben ser futuras');
+    }
+  }
+
+  private ensureTournamentUpdateInput(body: UpdateTournamentDto) {
+    const stringFields = [
+      body.title,
+      body.tournamentType,
+      body.modality,
+      body.format,
+      body.location,
+      body.city,
+      body.district,
+      body.prize,
+    ].filter((value): value is string => value != null);
+
+    if (stringFields.some((value) => value.trim().length === 0)) {
+      throw new BadRequestException('Completa los campos obligatorios');
+    }
+
+    if (
+      body.category != null &&
+      !['1RA', '2DA', '3RA', '4TA', '5TA', '6TA'].includes(body.category)
+    ) {
+      throw new BadRequestException('Selecciona una categorÃ­a vÃ¡lida');
+    }
+
+    if (body.startsAt != null) {
+      const startsAt = new Date(body.startsAt);
+      if (Number.isNaN(startsAt.getTime())) {
+        throw new BadRequestException('La fecha del torneo no es vÃ¡lida');
+      }
+      if (startsAt.getTime() <= Date.now()) {
+        throw new BadRequestException('La fecha y hora deben ser futuras');
+      }
     }
   }
 
@@ -1639,7 +1922,10 @@ export class TournamentsService {
     });
   }
 
-  private scheduleTournamentStartReminder(tournamentId: string, startsAt: Date) {
+  private scheduleTournamentStartReminder(
+    tournamentId: string,
+    startsAt: Date,
+  ) {
     const notifyAt = startsAt.getTime() - 60 * 60 * 1000;
     const delay = notifyAt - Date.now();
     if (delay <= 0) {
@@ -1780,8 +2066,8 @@ export class TournamentsService {
   ) {
     await Promise.all([
       this.notificationsService.sendToUser(user.id, {
-        title: '🎉 ¡Te encontramos dupla!',
-        body: 'Completa tu inscripción para asegurar tu cupo',
+        title: 'ðŸŽ‰ Â¡Te encontramos dupla!',
+        body: 'Completa tu inscripciÃ³n para asegurar tu cupo',
         data: {
           type: 'tournament_pairing_created',
           tournamentId,
@@ -1790,8 +2076,8 @@ export class TournamentsService {
         },
       }),
       this.notificationsService.sendToUser(partner.id, {
-        title: '🎉 ¡Te encontramos dupla!',
-        body: 'Completa tu inscripción para asegurar tu cupo',
+        title: 'ðŸŽ‰ Â¡Te encontramos dupla!',
+        body: 'Completa tu inscripciÃ³n para asegurar tu cupo',
         data: {
           type: 'tournament_pairing_created',
           tournamentId,
@@ -1813,7 +2099,7 @@ export class TournamentsService {
       () => {
         void Promise.all([
           this.notificationsService.sendToUser(user.id, {
-            title: '⏳ Tu dupla está esperando',
+            title: 'â³ Tu dupla estÃ¡ esperando',
             body: 'Confirma antes de perder el cupo',
             data: {
               type: 'tournament_pairing_reminder',
@@ -1823,7 +2109,7 @@ export class TournamentsService {
             },
           }),
           this.notificationsService.sendToUser(partner.id, {
-            title: '⏳ Tu dupla está esperando',
+            title: 'â³ Tu dupla estÃ¡ esperando',
             body: 'Confirma antes de perder el cupo',
             data: {
               type: 'tournament_pairing_reminder',
@@ -1847,7 +2133,7 @@ export class TournamentsService {
   ) {
     await Promise.all([
       this.notificationsService.sendToUser(user.id, {
-        title: '⚠️ Tu pareja ya no está disponible',
+        title: 'âš ï¸ Tu pareja ya no estÃ¡ disponible',
         body: 'Buscando nueva dupla',
         data: {
           type: 'tournament_pairing_canceled',
@@ -1856,7 +2142,7 @@ export class TournamentsService {
         },
       }),
       this.notificationsService.sendToUser(partner.id, {
-        title: '⚠️ Tu pareja ya no está disponible',
+        title: 'âš ï¸ Tu pareja ya no estÃ¡ disponible',
         body: 'Buscando nueva dupla',
         data: {
           type: 'tournament_pairing_canceled',
@@ -2402,6 +2688,45 @@ export class TournamentsService {
         'El ganador debe coincidir con una de las duplas del partido',
       );
     }
+  }
+
+  private ensureValidScore(
+    score: string | undefined,
+    options: { required: boolean; fallback?: string | null },
+  ) {
+    const trimmedScore = score?.trim();
+    if (!trimmedScore) {
+      if (options.required) {
+        throw new BadRequestException(
+          'Ingresa un resultado válido, ejemplo: 6-4, 6-3',
+        );
+      }
+      return options.fallback ?? null;
+    }
+
+    const sets = trimmedScore.split(',').map((set) => set.trim());
+    const validSetPattern = /^\d{1,2}-\d{1,2}$/;
+    if (sets.length === 0 || sets.length > 3) {
+      throw new BadRequestException(
+        'Ingresa un resultado válido, ejemplo: 6-4, 6-3',
+      );
+    }
+
+    for (const set of sets) {
+      if (!validSetPattern.test(set)) {
+        throw new BadRequestException(
+          'Ingresa un resultado válido, ejemplo: 6-4, 6-3',
+        );
+      }
+      const [left, right] = set.split('-').map((value) => Number(value));
+      if (left === right || left > 20 || right > 20) {
+        throw new BadRequestException(
+          'Ingresa games válidos por set, sin empates ni valores mayores a 20',
+        );
+      }
+    }
+
+    return trimmedScore;
   }
 
   private async rebuildNextRounds(

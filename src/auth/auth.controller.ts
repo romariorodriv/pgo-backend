@@ -1,7 +1,9 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
+  Patch,
   Post,
   UnauthorizedException,
   UseGuards,
@@ -32,6 +34,11 @@ export class AuthController {
     return this.authService.googleLogin(googleLoginDto);
   }
 
+  @Post('forgot-password')
+  forgotPassword(@Body() body: { email?: string }) {
+    return this.authService.forgotPassword(body.email);
+  }
+
   @UseGuards(JwtAuthGuard)
   @Get('me')
   me(@CurrentUser() user: { id?: string }) {
@@ -40,5 +47,28 @@ export class AuthController {
     }
 
     return this.authService.me(user.id);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Patch('password')
+  changePassword(
+    @CurrentUser() user: { id?: string },
+    @Body() body: { password?: string },
+  ) {
+    if (!user?.id) {
+      throw new UnauthorizedException('Usuario no autenticado');
+    }
+
+    return this.authService.changePassword(user.id, body.password);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Delete('account')
+  deleteAccount(@CurrentUser() user: { id?: string }) {
+    if (!user?.id) {
+      throw new UnauthorizedException('Usuario no autenticado');
+    }
+
+    return this.authService.deleteAccount(user.id);
   }
 }

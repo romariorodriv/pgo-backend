@@ -47,6 +47,27 @@ export class OpenMatchAlertsController {
     return this.alertsService.join(id, user.id);
   }
 
+  @Post(':id/leave')
+  leave(@Param('id') id: string, @CurrentUser() user: AuthenticatedUser) {
+    return this.alertsService.leave(id, user.id);
+  }
+
+  @Post(':id/invitations/accept')
+  acceptInvitation(
+    @Param('id') id: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.alertsService.acceptInvitation(id, user.id);
+  }
+
+  @Post(':id/invitations/reject')
+  rejectInvitation(
+    @Param('id') id: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.alertsService.rejectInvitation(id, user.id);
+  }
+
   @Post(':id/coordination')
   updateCoordination(
     @Param('id') id: string,

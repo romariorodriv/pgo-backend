@@ -5,10 +5,11 @@ export class AppLinksController {
   @Get('assetlinks.json')
   @Header('Content-Type', 'application/json')
   getAssetLinks() {
-    const packageName = process.env.ANDROID_PACKAGE_NAME ?? 'com.example.pgo';
+    const packageName = 'com.pgo.app';
+    // Production must override this with the Play App Signing SHA-256.
     const fingerprints = (
-      process.env.ANDROID_SHA256_CERT_FINGERPRINTS ??
-      'C9:79:F6:B6:4A:52:74:10:2E:E5:8A:BB:D0:D5:5E:CD:C1:05:EE:1B:FC:CC:8C:98:B4:6F:1F:07:54:5B:45:A0'
+      process.env.ANDROID_APP_LINKS_SHA256 ??
+      '4A:6B:E5:03:1F:94:26:B9:34:41:54:12:47:15:EA:BA:60:0E:68:57:57:84:9A:D0:F4:CA:DC:46:F9:70:47:65'
     )
       .split(',')
       .map((fingerprint) => fingerprint.trim())
@@ -24,5 +25,23 @@ export class AppLinksController {
         },
       },
     ];
+  }
+
+  @Get('apple-app-site-association')
+  @Header('Content-Type', 'application/json')
+  getAppleAppSiteAssociation() {
+    const teamId = process.env.APPLE_TEAM_ID?.trim();
+    return {
+      applinks: {
+        details: teamId
+          ? [
+              {
+                appIDs: [`${teamId}.com.pgo.app`],
+                components: [{ '/': '/partidos/*' }],
+              },
+            ]
+          : [],
+      },
+    };
   }
 }
