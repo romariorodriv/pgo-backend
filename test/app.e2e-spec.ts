@@ -18,12 +18,20 @@ describe('AppController (e2e)', () => {
   });
 
   it('/ (GET)', () => {
+    return request(app.getHttpServer()).get('/api').expect(200).expect({
+      status: 'ok',
+      message: 'PGO backend running',
+    });
+  });
+
+  it('/api/health (GET)', () => {
     return request(app.getHttpServer())
-      .get('/api')
+      .get('/api/health')
       .expect(200)
-      .expect({
-        status: 'ok',
-        message: 'PGO backend running',
+      .expect((response) => {
+        expect(response.body.ok).toBe(true);
+        expect(typeof response.body.timestamp).toBe('string');
+        expect(typeof response.body.uptime).toBe('number');
       });
   });
 });
