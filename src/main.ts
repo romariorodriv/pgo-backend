@@ -1,10 +1,17 @@
 import { NestFactory } from '@nestjs/core';
 import { RequestMethod, ValidationPipe } from '@nestjs/common';
 import { json, urlencoded } from 'express';
+import helmet from 'helmet';
 import { AppModule } from './app.module';
+import { PrismaService } from './prisma/prisma.service';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
+  app.use(
+    helmet({
+      crossOriginResourcePolicy: { policy: 'cross-origin' },
+    }),
+  );
   app.setGlobalPrefix('api', {
     exclude: [
       { path: 'share/tournaments/:id', method: RequestMethod.GET },
@@ -21,8 +28,19 @@ async function bootstrap() {
       },
     ],
   });
+  const allowedOrigins = (process.env.CORS_ORIGINS ?? '')
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+  const isProduction = (process.env.NODE_ENV ?? '').toLowerCase() === 'production';
   app.enableCors({
-    origin: true,
+    origin(origin, callback) {
+      if (!origin || (!isProduction && allowedOrigins.length === 0) || allowedOrigins.includes(origin)) {
+        callback(null, true);
+        return;
+      }
+      callback(new Error('Origin not allowed by CORS'));
+    },
     credentials: true,
   });
   app.use(json({ limit: '20mb' }));
@@ -48,6 +66,8 @@ async function bootstrap() {
       transform: true,
     }),
   );
-  await app.listen(process.env.PORT ?? 3000);
+  app.enableShutdownHooks();
+  app.get(PrismaService).enableShutdownHooks(app);
+  await app.listen(process.env.PORT ?? 3000, '127.0.0.1');
 }
 bootstrap();

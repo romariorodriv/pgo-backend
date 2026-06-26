@@ -9,16 +9,22 @@ import { Prisma } from '@prisma/client';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
 import { OAuth2Client } from 'google-auth-library';
-import { randomUUID } from 'crypto';
+import { createHash, randomBytes, randomUUID } from 'crypto';
+import { EmailService } from './email.service';
 import { GoogleLoginDto } from './dto/google-login.dto';
 import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
+import { validatePasswordOrThrow } from './password-rules';
 import { UsersService } from '../users/users.service';
 import { JwtPayload } from './interfaces/jwt-payload.interface';
 import { PrismaService } from '../prisma/prisma.service';
 
 @Injectable()
 export class AuthService {
+  private static readonly passwordResetMessage =
+    'Si el correo esta registrado, recibiras instrucciones para restablecer tu contrasena.';
+  private static readonly passwordResetTtlMs = 30 * 60 * 1000;
+  private static readonly refreshTtlMs = 30 * 24 * 60 * 60 * 1000;
   private readonly googleClient = new OAuth2Client();
   private readonly googleClientIds: string[];
 
@@ -27,6 +33,7 @@ export class AuthService {
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
     private readonly prisma: PrismaService,
+    private readonly emailService: EmailService,
   ) {
     const rawClientIds =
       this.configService.get<string>('GOOGLE_CLIENT_IDS') ??
@@ -41,13 +48,14 @@ export class AuthService {
 
   async register(registerDto: RegisterDto) {
     const normalizedEmail = registerDto.email.toLowerCase().trim();
+    const password = validatePasswordOrThrow(registerDto.password);
     const existingUser = await this.usersService.findByEmail(normalizedEmail);
 
     if (existingUser) {
       throw new BadRequestException('El correo ya esta registrado');
     }
 
-    const passwordHash = await bcrypt.hash(registerDto.password, 10);
+    const passwordHash = await bcrypt.hash(password, 10);
     let user;
 
     try {
@@ -87,6 +95,10 @@ export class AuthService {
       throw new UnauthorizedException('Credenciales invalidas');
     }
 
+    if (!user.isActive) {
+      throw new UnauthorizedException('Credenciales invalidas');
+    }
+
     const isPasswordValid = await bcrypt.compare(
       loginDto.password,
       user.passwordHash,
@@ -94,6 +106,10 @@ export class AuthService {
 
     if (!isPasswordValid) {
       throw new UnauthorizedException('Credenciales invalidas');
+    }
+
+    if (!user.isActive) {
+      throw new UnauthorizedException('No se pudo validar la cuenta de Google');
     }
 
     const tokens = await this.buildTokens(user.id, user.email);
@@ -119,9 +135,7 @@ export class AuthService {
     let payload;
 
     try {
-      console.info(
-        `auth_google verify audience=${this.googleClientIds.join(',')}`,
-      );
+      console.info('auth_google verify_start');
       const ticket = await this.googleClient.verifyIdToken({
         idToken: googleLoginDto.idToken,
         audience: this.googleClientIds,
@@ -189,7 +203,7 @@ export class AuthService {
     }
 
     const tokens = await this.buildTokens(user.id, user.email);
-    console.info(`auth_google jwt_issued userId=${user.id}`);
+    console.info('auth_google jwt_issued');
 
     return {
       message: 'Login con Google exitoso',
@@ -203,16 +217,76 @@ export class AuthService {
     return separator >= 0 ? email!.slice(separator + 1) : 'unknown';
   }
 
-  async forgotPassword(email?: string) {
-    const normalizedEmail = email?.toLowerCase().trim() ?? '';
-    if (!normalizedEmail || !normalizedEmail.includes('@')) {
-      throw new BadRequestException('Ingresa un correo valido');
+  async forgotPassword(email: string) {
+    const normalizedEmail = email.toLowerCase().trim();
+    const user = await this.usersService.findByEmail(normalizedEmail);
+
+    if (!user || !user.isActive) {
+      return { message: AuthService.passwordResetMessage };
     }
 
+    const resetToken = this.generateOpaqueToken();
+    const tokenHash = this.hashToken(resetToken);
+    const expiresAt = new Date(Date.now() + AuthService.passwordResetTtlMs);
+
+    await this.prisma.$transaction([
+      this.prisma.passwordResetToken.updateMany({
+        where: { userId: user.id, usedAt: null },
+        data: { usedAt: new Date() },
+      }),
+      this.prisma.passwordResetToken.create({
+        data: {
+          userId: user.id,
+          tokenHash,
+          expiresAt,
+        },
+      }),
+    ]);
+
+    await this.emailService.sendPasswordReset(user.email, resetToken);
+
     return {
-      message:
-        'Si el correo existe, enviaremos instrucciones para recuperar tu clave.',
+      message: AuthService.passwordResetMessage,
     };
+  }
+
+  async resetPassword(token: string, password?: string) {
+    const nextPassword = validatePasswordOrThrow(password);
+    const tokenHash = this.hashToken(token);
+    const passwordHash = await bcrypt.hash(nextPassword, 10);
+
+    const resetToken = await this.prisma.passwordResetToken.findUnique({
+      where: { tokenHash },
+      include: { user: true },
+    });
+
+    if (
+      !resetToken ||
+      resetToken.usedAt ||
+      resetToken.expiresAt.getTime() <= Date.now() ||
+      !resetToken.user.isActive
+    ) {
+      throw new BadRequestException(
+        'El codigo ingresado no es valido o vencio',
+      );
+    }
+
+    await this.prisma.$transaction([
+      this.prisma.user.update({
+        where: { id: resetToken.userId },
+        data: { passwordHash },
+      }),
+      this.prisma.passwordResetToken.update({
+        where: { id: resetToken.id },
+        data: { usedAt: new Date() },
+      }),
+      this.prisma.refreshToken.updateMany({
+        where: { userId: resetToken.userId, revokedAt: null },
+        data: { revokedAt: new Date() },
+      }),
+    ]);
+
+    return { message: 'Tu contrasena fue actualizada correctamente' };
   }
 
   async me(userId: string) {
@@ -226,22 +300,62 @@ export class AuthService {
   }
 
   async changePassword(userId: string, password?: string) {
-    const nextPassword = password?.trim() ?? '';
-
-    if (
-      nextPassword.length < 8 ||
-      !/\d/.test(nextPassword) ||
-      !/[A-Z]/.test(nextPassword)
-    ) {
-      throw new BadRequestException(
-        'La contrasena debe tener 8 caracteres, 1 numero y 1 mayuscula',
-      );
-    }
+    const nextPassword = validatePasswordOrThrow(password);
 
     const passwordHash = await bcrypt.hash(nextPassword, 10);
-    await this.usersService.updateById(userId, { passwordHash });
+    await this.prisma.$transaction([
+      this.prisma.user.update({
+        where: { id: userId },
+        data: { passwordHash },
+      }),
+      this.prisma.refreshToken.updateMany({
+        where: { userId, revokedAt: null },
+        data: { revokedAt: new Date() },
+      }),
+    ]);
 
     return { message: 'Contrasena actualizada correctamente' };
+  }
+
+  async refresh(refreshToken: string) {
+    const tokenHash = this.hashToken(refreshToken);
+    const stored = await this.prisma.refreshToken.findUnique({
+      where: { tokenHash },
+      include: { user: true },
+    });
+
+    if (
+      !stored ||
+      stored.revokedAt ||
+      stored.expiresAt.getTime() <= Date.now() ||
+      !stored.user.isActive
+    ) {
+      throw new UnauthorizedException('Sesion expirada');
+    }
+
+    await this.prisma.refreshToken.update({
+      where: { id: stored.id },
+      data: { revokedAt: new Date() },
+    });
+
+    const tokens = await this.buildTokens(stored.user.id, stored.user.email);
+
+    return {
+      message: 'Sesion actualizada',
+      user: this.sanitizeUser(stored.user),
+      ...tokens,
+    };
+  }
+
+  async logout(refreshToken?: string) {
+    if (refreshToken) {
+      await this.prisma.refreshToken.updateMany({
+        where: { tokenHash: this.hashToken(refreshToken), revokedAt: null },
+        data: { revokedAt: new Date() },
+      });
+    }
+
+    return { message: 'Sesion cerrada correctamente' };
   }
 
   async deleteAccount(userId: string) {
@@ -256,6 +370,8 @@ export class AuthService {
 
     await this.prisma.$transaction([
       this.prisma.pushDeviceToken.deleteMany({ where: { userId } }),
+      this.prisma.refreshToken.deleteMany({ where: { userId } }),
+      this.prisma.passwordResetToken.deleteMany({ where: { userId } }),
       this.prisma.appNotification.deleteMany({ where: { userId } }),
       this.prisma.profile.updateMany({
         where: { userId },
@@ -313,8 +429,28 @@ export class AuthService {
       email,
     };
 
+    const refreshToken = this.generateOpaqueToken();
+    const tokenHash = this.hashToken(refreshToken);
+
+    await this.prisma.refreshToken.create({
+      data: {
+        userId,
+        tokenHash,
+        expiresAt: new Date(Date.now() + AuthService.refreshTtlMs),
+      },
+    });
+
     return {
       accessToken: await this.jwtService.signAsync(payload),
+      refreshToken,
     };
+  }
+
+  private generateOpaqueToken() {
+    return randomBytes(48).toString('base64url');
+  }
+
+  private hashToken(token: string) {
+    return createHash('sha256').update(token).digest('hex');
   }
 }

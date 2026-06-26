@@ -1,4 +1,5 @@
 import { OpenMatchAlertStatus } from '@prisma/client';
+import { ConflictException } from '@nestjs/common';
 import { OpenMatchAlertsService } from './open-match-alerts.service';
 
 describe('OpenMatchAlertsService public preview', () => {
@@ -18,10 +19,7 @@ describe('OpenMatchAlertsService public preview', () => {
         }),
       },
     };
-    const service = new OpenMatchAlertsService(
-      prisma as never,
-      {} as never,
-    );
+    const service = new OpenMatchAlertsService(prisma as never, {} as never);
 
     const preview = await service.findPublicPreview('match-id');
 
@@ -44,5 +42,72 @@ describe('OpenMatchAlertsService public preview', () => {
     expect(preview).not.toHaveProperty('organizer');
     expect(preview).not.toHaveProperty('invitations');
     expect(preview).not.toHaveProperty('coordinationUpdates');
+  });
+});
+
+describe('OpenMatchAlertsService write safety', () => {
+  const futureStartsAt = () =>
+    new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString();
+
+  const createBody = () => ({
+    category: '4ta',
+    format: 'Dobles',
+    startsAt: futureStartsAt(),
+    club: 'PGO Club',
+    district: 'Miraflores',
+    courtStatus: 'Reservada',
+    missingPlayers: 2,
+    costPerPerson: 30,
+    paymentLabel: 'Yape',
+  });
+
+  it('blocks equivalent active duplicate open matches for the same organizer', async () => {
+    const tx = {
+      $executeRaw: jest.fn(),
+      openMatchAlert: {
+        findFirst: jest.fn().mockResolvedValue({ id: 'existing-alert' }),
+        create: jest.fn(),
+      },
+    };
+    const prisma = {
+      $transaction: jest.fn((callback) => callback(tx)),
+    };
+    const service = new OpenMatchAlertsService(
+      prisma as never,
+      { sendToAllUsers: jest.fn(), sendToUsers: jest.fn() } as never,
+    );
+
+    await expect(service.create('user-1', createBody())).rejects.toBeInstanceOf(
+      ConflictException,
+    );
+
+    expect(tx.openMatchAlert.create).not.toHaveBeenCalled();
+  });
+
+  it('lets the organizer delete an already canceled open match idempotently', async () => {
+    const prisma = {
+      openMatchAlert: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'alert-1',
+          organizerId: 'user-1',
+          status: OpenMatchAlertStatus.CANCELED,
+          resultMatchId: null,
+          club: 'PGO Club',
+          category: '4ta',
+          format: 'Dobles',
+          participants: [],
+        }),
+      },
+      $transaction: jest.fn(),
+    };
+    const service = new OpenMatchAlertsService(
+      prisma as never,
+      { sendToUsers: jest.fn() } as never,
+    );
+
+    await expect(service.remove('alert-1', 'user-1')).resolves.toEqual({
+      deleted: true,
+    });
+    expect(prisma.$transaction).not.toHaveBeenCalled();
   });
 });

@@ -109,7 +109,7 @@ export class OpenMatchAlertsService {
       },
     });
 
-    if (!alert || alert.status === OpenMatchAlertStatus.CANCELED) {
+    if (!alert) {
       throw new NotFoundException('Partido abierto no encontrado');
     }
 
@@ -117,6 +117,10 @@ export class OpenMatchAlertsService {
       throw new ForbiddenException(
         'Solo el creador puede eliminar esta alerta',
       );
+    }
+
+    if (alert.status === OpenMatchAlertStatus.CANCELED) {
+      return { deleted: true };
     }
 
     if (
@@ -167,27 +171,71 @@ export class OpenMatchAlertsService {
     }
     await this.validateInvitees(userId, invitedUserIds, body);
 
-    const alert = await this.prisma.openMatchAlert.create({
-      data: {
-        organizerId: userId,
-        category: body.category.trim(),
-        format: body.format.trim(),
-        startsAt: new Date(body.startsAt),
-        club: body.club.trim(),
-        district: body.district.trim(),
-        courtStatus: body.courtStatus.trim(),
-        missingPlayers: body.missingPlayers,
-        costPerPerson: body.costPerPerson,
-        paymentLabel: body.paymentLabel.trim(),
-        comment: body.comment?.trim() || null,
-        invitations: {
-          create: invitedUserIds.map((invitedUserId) => ({
-            inviteeId: invitedUserId,
-          })),
+    const startsAt = new Date(body.startsAt);
+    const category = body.category.trim();
+    const format = body.format.trim();
+    const club = body.club.trim();
+    const district = body.district.trim();
+    const courtStatus = body.courtStatus.trim();
+    const paymentLabel = body.paymentLabel.trim();
+    const comment = body.comment?.trim() || null;
+    const duplicateFingerprint = this.createFingerprint({
+      userId,
+      category,
+      format,
+      startsAt,
+      club,
+      district,
+      missingPlayers: body.missingPlayers,
+    });
+
+    const alert = await this.prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${duplicateFingerprint}))`;
+
+      const duplicate = await tx.openMatchAlert.findFirst({
+        where: {
+          organizerId: userId,
+          status: {
+            in: [OpenMatchAlertStatus.OPEN, OpenMatchAlertStatus.FULL],
+          },
+          category: { equals: category, mode: 'insensitive' },
+          format: { equals: format, mode: 'insensitive' },
+          startsAt,
+          club: { equals: club, mode: 'insensitive' },
+          district: { equals: district, mode: 'insensitive' },
+          missingPlayers: body.missingPlayers,
         },
-        status: OpenMatchAlertStatus.OPEN,
-      },
-      include: this.include(userId),
+        select: { id: true },
+      });
+
+      if (duplicate) {
+        throw new ConflictException(
+          'Ya tienes una alerta igual para este partido',
+        );
+      }
+
+      return tx.openMatchAlert.create({
+        data: {
+          organizerId: userId,
+          category,
+          format,
+          startsAt,
+          club,
+          district,
+          courtStatus,
+          missingPlayers: body.missingPlayers,
+          costPerPerson: body.costPerPerson,
+          paymentLabel,
+          comment,
+          invitations: {
+            create: invitedUserIds.map((invitedUserId) => ({
+              inviteeId: invitedUserId,
+            })),
+          },
+          status: OpenMatchAlertStatus.OPEN,
+        },
+        include: this.include(userId),
+      });
     });
 
     const remainingPlayers = body.missingPlayers;
@@ -242,6 +290,27 @@ export class OpenMatchAlertsService {
         'El comentario no puede superar 240 caracteres',
       );
     }
+  }
+
+  private createFingerprint(input: {
+    userId: string;
+    category: string;
+    format: string;
+    startsAt: Date;
+    club: string;
+    district: string;
+    missingPlayers: number;
+  }) {
+    return [
+      'open-match-alert',
+      input.userId,
+      input.category.toLowerCase(),
+      input.format.toLowerCase(),
+      input.startsAt.toISOString(),
+      input.club.toLowerCase(),
+      input.district.toLowerCase(),
+      input.missingPlayers,
+    ].join(':');
   }
 
   private async validateInvitees(
@@ -401,9 +470,7 @@ export class OpenMatchAlertsService {
         throw new BadRequestException('Este partido ya fue finalizado');
       }
       if (currentAlert.organizerId === userId) {
-        throw new BadRequestException(
-          'Ya eres el organizador de este partido',
-        );
+        throw new BadRequestException('Ya eres el organizador de este partido');
       }
       if (
         currentAlert.participants.some(

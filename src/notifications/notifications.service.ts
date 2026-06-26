@@ -176,8 +176,25 @@ export class NotificationsService {
         title: payload.title,
         body: payload.body,
         data: payload.data ?? {},
+        idempotencyKey: this.notificationIdempotencyKey(userId, payload),
       })),
+      skipDuplicates: true,
     });
+  }
+
+  private notificationIdempotencyKey(userId: string, payload: PushPayload) {
+    const data = payload.data ?? {};
+    const type = data.type ?? 'GENERAL';
+    const targetId =
+      data.alertId ??
+      data.openMatchAlertId ??
+      data.matchId ??
+      data.tournamentId ??
+      data.notificationId;
+
+    if (!targetId) return null;
+
+    return `${userId}:${type}:${targetId}`;
   }
 
   private async sendToDevices(

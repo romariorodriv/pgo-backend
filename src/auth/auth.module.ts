@@ -5,6 +5,7 @@ import { PassportModule } from '@nestjs/passport';
 import type { StringValue } from 'ms';
 import { UsersModule } from '../users/users.module';
 import { AuthController } from './auth.controller';
+import { EmailService } from './email.service';
 import { AuthService } from './auth.service';
 import { JwtStrategy } from './strategies/jwt.strategy';
 
@@ -15,9 +16,8 @@ import { JwtStrategy } from './strategies/jwt.strategy';
     JwtModule.registerAsync({
       inject: [ConfigService],
       useFactory: (configService: ConfigService) => {
-        const expiresIn = (
-          configService.get<string>('JWT_EXPIRES_IN') ?? '30d'
-        ) as StringValue;
+        const expiresIn = (configService.get<string>('JWT_EXPIRES_IN') ??
+          '30d') as StringValue;
 
         return {
           secret: configService.getOrThrow<string>('JWT_SECRET'),
@@ -27,8 +27,6 @@ import { JwtStrategy } from './strategies/jwt.strategy';
     }),
   ],
   controllers: [AuthController],
-  providers: [AuthService, JwtStrategy],
+  providers: [AuthService, JwtStrategy, EmailService],
 })
 export class AuthModule {}
-
-
