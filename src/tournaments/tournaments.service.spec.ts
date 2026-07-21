@@ -10,6 +10,7 @@ describe('TournamentsService MVP guards', () => {
   beforeEach(() => {
     prisma = {
       tournament: {
+        findMany: jest.fn(),
         findUnique: jest.fn(),
         update: jest.fn(),
       },
@@ -34,6 +35,7 @@ describe('TournamentsService MVP guards', () => {
         id: 't1',
         status: TournamentStatus.PUBLISHED,
         registrationsOpen: true,
+        startsAt: new Date(Date.now() + 60 * 60 * 1000),
       })
       .mockResolvedValueOnce({ playerCapacity: 1 });
     prisma.tournamentRegistration.findFirst.mockResolvedValue(null);
@@ -44,6 +46,37 @@ describe('TournamentsService MVP guards', () => {
     await expect(
       service.registerSolo('t1', 'u1', 'Drive', 'Flexible'),
     ).rejects.toThrow('El torneo ya no tiene cupos disponibles');
+  });
+
+  it('excludes expired tournaments from the public list', async () => {
+    prisma.tournament.findMany.mockResolvedValue([]);
+
+    await expect(service.findAll()).resolves.toEqual([]);
+    expect(prisma.tournament.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          startsAt: {
+            gt: expect.any(Date),
+          },
+          status: {
+            notIn: [TournamentStatus.CANCELED, TournamentStatus.COMPLETED],
+          },
+        },
+      }),
+    );
+  });
+
+  it('rejects registration when tournament date already passed', async () => {
+    prisma.tournament.findUnique.mockResolvedValueOnce({
+      id: 't1',
+      status: TournamentStatus.PUBLISHED,
+      registrationsOpen: true,
+      startsAt: new Date(Date.now() - 60 * 1000),
+    });
+
+    await expect(
+      service.registerSolo('t1', 'u1', 'Drive', 'Flexible'),
+    ).rejects.toThrow('La fecha del torneo ya pasó');
   });
 
   it('rejects registration when tournament is completed', async () => {

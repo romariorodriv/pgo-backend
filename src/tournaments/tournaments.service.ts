@@ -187,6 +187,14 @@ export class TournamentsService {
 
   findAll() {
     return this.prisma.tournament.findMany({
+      where: {
+        startsAt: {
+          gt: new Date(),
+        },
+        status: {
+          notIn: [TournamentStatus.CANCELED, TournamentStatus.COMPLETED],
+        },
+      },
       orderBy: {
         startsAt: 'asc',
       },
@@ -1361,6 +1369,7 @@ export class TournamentsService {
         id: true,
         status: true,
         registrationsOpen: true,
+        startsAt: true,
       },
     });
 
@@ -1378,6 +1387,10 @@ export class TournamentsService {
       throw new BadRequestException(
         'Las inscripciones para este torneo ya fueron cerradas',
       );
+    }
+
+    if (tournament.startsAt.getTime() <= Date.now()) {
+      throw new BadRequestException('La fecha del torneo ya pasó');
     }
 
     return tournament;
