@@ -4,6 +4,7 @@ import { json, urlencoded } from 'express';
 import helmet from 'helmet';
 import { AppModule } from './app.module';
 import { PrismaService } from './prisma/prisma.service';
+import { profileOnlyAccessMiddleware } from './profile-only-access.middleware';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
@@ -43,6 +44,7 @@ async function bootstrap() {
     },
     credentials: true,
   });
+  app.use(profileOnlyAccessMiddleware);
   app.use(json({ limit: '20mb' }));
   app.use(urlencoded({ extended: true, limit: '20mb' }));
   app.use((err: any, req: any, res: any, next: any) => {
