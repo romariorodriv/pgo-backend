@@ -3,7 +3,6 @@ ALTER TABLE "tournaments" ADD COLUMN "slug" TEXT;
 WITH slugged AS (
   SELECT
     "id",
-    "created_at",
     COALESCE(
       NULLIF(
         TRIM(BOTH '-' FROM REGEXP_REPLACE(
