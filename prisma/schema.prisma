@@ -82,6 +82,61 @@ enum OpenMatchInvitationStatus {
   CANCELED
 }
 
+enum AdminRole {
+  SUPER_ADMIN
+  OPERATIONS
+  ANALYST
+}
+
+enum AdminStatus {
+  ACTIVE
+  SUSPENDED
+}
+
+enum GlobalRole {
+  PGO_ADMIN
+}
+
+enum ClubRole {
+  OWNER
+  ADMIN
+  STAFF
+}
+
+enum ClubStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  SUSPENDED
+}
+
+enum CourtStatus {
+  ACTIVE
+  INACTIVE
+  MAINTENANCE
+}
+
+enum CourtBlockReason {
+  MAINTENANCE
+  TOURNAMENT
+  EVENT
+  OTHER
+}
+
+enum ReservationStatus {
+  CONFIRMED
+  CANCELLED
+  COMPLETED
+  NO_SHOW
+}
+
+enum ReservationSource {
+  WEB_PLAYER
+  CLUB_MANUAL
+  ADMIN
+  MOBILE
+}
+
 model User {
   id                               String                        @id @default(uuid())
   name                             String
@@ -105,14 +160,266 @@ model User {
   pushDeviceTokens                 PushDeviceToken[]
   refreshTokens                    RefreshToken[]
   passwordResetTokens              PasswordResetToken[]
+  authIdentities                   AuthIdentity[]
   notifications                    AppNotification[]
   supportReports                   SupportReport[]
   organizedOpenMatchAlerts         OpenMatchAlert[]              @relation("OpenMatchOrganizer")
   openMatchJoins                   OpenMatchParticipant[]
   openMatchInvitations             OpenMatchInvitation[]         @relation("OpenMatchInvitee")
   openMatchCoordinationUpdates     OpenMatchCoordinationUpdate[]
+  openMatchChatMessages            OpenMatchChatMessage[]
+  globalRoles                      UserGlobalRole[]
+  clubMemberships                  ClubMember[]
+  playerReservations               Reservation[]                 @relation("BookingPlayer")
+  createdReservations              Reservation[]                 @relation("BookingCreator")
+  cancelledReservations            Reservation[]                 @relation("BookingCanceller")
+  createdCourtBlocks               CourtBlock[]
 
   @@map("users")
+}
+
+model UserGlobalRole {
+  id        String     @id @default(uuid())
+  userId    String     @map("user_id")
+  role      GlobalRole
+  createdAt DateTime   @default(now()) @map("created_at")
+  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, role])
+  @@index([role])
+  @@map("user_global_roles")
+}
+
+model Club {
+  id                      String            @id @default(uuid())
+  name                    String
+  slug                    String            @unique
+  description             String?
+  email                   String
+  phone                   String
+  instagram               String?
+  logoUrl                 String?           @map("logo_url")
+  coverImageUrl           String?           @map("cover_image_url")
+  address                 String
+  district                String
+  city                    String
+  latitude                Decimal?          @db.Decimal(10, 7)
+  longitude               Decimal?          @db.Decimal(10, 7)
+  timezone                String            @default("America/Lima")
+  status                  ClubStatus        @default(PENDING)
+  cancellationHoursBefore Int               @default(2) @map("cancellation_hours_before")
+  createdAt               DateTime          @default(now()) @map("created_at")
+  updatedAt               DateTime          @updatedAt @map("updated_at")
+  members                 ClubMember[]
+  courts                  Court[]
+  schedules               Schedule[]
+  allowedDurations        AllowedDuration[]
+  priceRules              PriceRule[]
+  blocks                  CourtBlock[]
+  reservations            Reservation[]
+
+  @@index([status, city, district])
+  @@map("clubs")
+}
+
+model ClubMember {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  clubId    String   @map("club_id")
+  role      ClubRole @default(STAFF)
+  createdAt DateTime @default(now()) @map("created_at")
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  club      Club     @relation(fields: [clubId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, clubId])
+  @@index([clubId, role])
+  @@map("club_members")
+}
+
+model Court {
+  id           String        @id @default(uuid())
+  clubId       String        @map("club_id")
+  name         String
+  sport        String        @default("PADEL")
+  description  String?
+  indoor       Boolean       @default(false)
+  surface      String?
+  status       CourtStatus   @default(ACTIVE)
+  active       Boolean       @default(true)
+  createdAt    DateTime      @default(now()) @map("created_at")
+  updatedAt    DateTime      @updatedAt @map("updated_at")
+  club         Club          @relation(fields: [clubId], references: [id], onDelete: Cascade)
+  schedules    Schedule[]
+  priceRules   PriceRule[]
+  blocks       CourtBlock[]
+  reservations Reservation[]
+
+  @@index([clubId, active, status])
+  @@map("courts")
+}
+
+model Schedule {
+  id        String  @id @default(uuid())
+  clubId    String  @map("club_id")
+  courtId   String? @map("court_id")
+  dayOfWeek Int     @map("day_of_week")
+  openTime  String  @map("open_time")
+  closeTime String  @map("close_time")
+  active    Boolean @default(true)
+  club      Club    @relation(fields: [clubId], references: [id], onDelete: Cascade)
+  court     Court?  @relation(fields: [courtId], references: [id], onDelete: Cascade)
+
+  @@unique([clubId, courtId, dayOfWeek])
+  @@index([clubId, dayOfWeek])
+  @@map("schedules")
+}
+
+model AllowedDuration {
+  id      String  @id @default(uuid())
+  clubId  String  @map("club_id")
+  minutes Int
+  active  Boolean @default(true)
+  club    Club    @relation(fields: [clubId], references: [id], onDelete: Cascade)
+
+  @@unique([clubId, minutes])
+  @@map("allowed_durations")
+}
+
+model PriceRule {
+  id              String  @id @default(uuid())
+  clubId          String  @map("club_id")
+  courtId         String? @map("court_id")
+  dayOfWeek       Int     @map("day_of_week")
+  startTime       String  @map("start_time")
+  endTime         String  @map("end_time")
+  durationMinutes Int     @map("duration_minutes")
+  price           Decimal @db.Decimal(10, 2)
+  active          Boolean @default(true)
+  club            Club    @relation(fields: [clubId], references: [id], onDelete: Cascade)
+  court           Court?  @relation(fields: [courtId], references: [id], onDelete: Cascade)
+
+  @@index([clubId, dayOfWeek, durationMinutes])
+  @@map("price_rules")
+}
+
+model CourtBlock {
+  id              String           @id @default(uuid())
+  clubId          String           @map("club_id")
+  courtId         String           @map("court_id")
+  startAt         DateTime         @map("start_at") @db.Timestamptz(3)
+  endAt           DateTime         @map("end_at") @db.Timestamptz(3)
+  reason          CourtBlockReason
+  notes           String?
+  createdByUserId String           @map("created_by_user_id")
+  createdAt       DateTime         @default(now()) @map("created_at")
+  club            Club             @relation(fields: [clubId], references: [id], onDelete: Cascade)
+  court           Court            @relation(fields: [courtId], references: [id], onDelete: Cascade)
+  createdBy       User             @relation(fields: [createdByUserId], references: [id], onDelete: Restrict)
+
+  @@index([courtId, startAt, endAt])
+  @@map("court_blocks")
+}
+
+model Reservation {
+  id                String            @id @default(uuid())
+  bookingCode       String            @unique @map("booking_code")
+  clubId            String            @map("club_id")
+  courtId           String            @map("court_id")
+  playerId          String?           @map("player_id")
+  createdByUserId   String            @map("created_by_user_id")
+  guestName         String?           @map("guest_name")
+  guestPhone        String?           @map("guest_phone")
+  startAt           DateTime          @map("start_at") @db.Timestamptz(3)
+  endAt             DateTime          @map("end_at") @db.Timestamptz(3)
+  durationMinutes   Int               @map("duration_minutes")
+  price             Decimal           @db.Decimal(10, 2)
+  status            ReservationStatus @default(CONFIRMED)
+  source            ReservationSource
+  notes             String?
+  cancelledAt       DateTime?         @map("cancelled_at")
+  cancelledByUserId String?           @map("cancelled_by_user_id")
+  createdAt         DateTime          @default(now()) @map("created_at")
+  updatedAt         DateTime          @updatedAt @map("updated_at")
+  club              Club              @relation(fields: [clubId], references: [id], onDelete: Restrict)
+  court             Court             @relation(fields: [courtId], references: [id], onDelete: Restrict)
+  player            User?             @relation("BookingPlayer", fields: [playerId], references: [id], onDelete: SetNull)
+  createdBy         User              @relation("BookingCreator", fields: [createdByUserId], references: [id], onDelete: Restrict)
+  cancelledBy       User?             @relation("BookingCanceller", fields: [cancelledByUserId], references: [id], onDelete: SetNull)
+
+  @@index([courtId, startAt, endAt])
+  @@index([playerId, startAt])
+  @@index([clubId, startAt])
+  @@map("reservations")
+}
+
+model AdminUser {
+  id                  String              @id @default(uuid())
+  email               String              @unique
+  name                String
+  passwordHash        String              @map("password_hash")
+  role                AdminRole
+  status              AdminStatus         @default(ACTIVE)
+  failedLoginAttempts Int                 @default(0) @map("failed_login_attempts")
+  lockedUntil         DateTime?           @map("locked_until")
+  lastLoginAt         DateTime?           @map("last_login_at")
+  createdAt           DateTime            @default(now()) @map("created_at")
+  updatedAt           DateTime            @updatedAt @map("updated_at")
+  refreshTokens       AdminRefreshToken[]
+  auditLogs           AdminAuditLog[]
+
+  @@index([status])
+  @@map("admin_users")
+}
+
+model AdminRefreshToken {
+  id                String    @id @default(uuid())
+  adminUserId       String    @map("admin_user_id")
+  tokenHash         String    @unique @map("token_hash")
+  expiresAt         DateTime  @map("expires_at")
+  revokedAt         DateTime? @map("revoked_at")
+  replacedByTokenId String?   @map("replaced_by_token_id")
+  ipAddress         String?   @map("ip_address")
+  userAgent         String?   @map("user_agent")
+  createdAt         DateTime  @default(now()) @map("created_at")
+  adminUser         AdminUser @relation(fields: [adminUserId], references: [id], onDelete: Cascade)
+
+  @@index([adminUserId, revokedAt])
+  @@index([expiresAt])
+  @@map("admin_refresh_tokens")
+}
+
+model AdminAuditLog {
+  id          String     @id @default(uuid())
+  adminUserId String?    @map("admin_user_id")
+  action      String
+  entityType  String?    @map("entity_type")
+  entityId    String?    @map("entity_id")
+  metadata    Json?
+  ipAddress   String?    @map("ip_address")
+  userAgent   String?    @map("user_agent")
+  createdAt   DateTime   @default(now()) @map("created_at")
+  adminUser   AdminUser? @relation(fields: [adminUserId], references: [id], onDelete: SetNull)
+
+  @@index([adminUserId, createdAt])
+  @@index([action, createdAt])
+  @@map("admin_audit_logs")
+}
+
+model AuthIdentity {
+  id             String   @id @default(uuid())
+  userId         String   @map("user_id")
+  provider       String
+  providerUserId String   @map("provider_user_id")
+  firebaseUid    String?  @unique @map("firebase_uid")
+  email          String?
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerUserId])
+  @@index([userId])
+  @@map("auth_identities")
 }
 
 model RefreshToken {
@@ -308,6 +615,7 @@ model OpenMatchAlert {
   participants        OpenMatchParticipant[]
   invitations         OpenMatchInvitation[]
   coordinationUpdates OpenMatchCoordinationUpdate[]
+  chatMessages        OpenMatchChatMessage[]
 
   @@index([status, startsAt])
   @@index([organizerId])
@@ -327,6 +635,20 @@ model OpenMatchCoordinationUpdate {
   @@index([alertId, createdAt])
   @@index([userId])
   @@map("open_match_coordination_updates")
+}
+
+model OpenMatchChatMessage {
+  id        String   @id @default(uuid())
+  alertId   String   @map("alert_id")
+  userId    String   @map("user_id")
+  message   String
+  createdAt DateTime @default(now()) @map("created_at")
+  alert     OpenMatchAlert @relation(fields: [alertId], references: [id], onDelete: Cascade)
+  user      User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([alertId, createdAt])
+  @@index([userId])
+  @@map("open_match_chat_messages")
 }
 
 model OpenMatchInvitation {

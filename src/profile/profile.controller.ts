@@ -1,9 +1,11 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   Patch,
+  Post,
   Req,
   UseGuards,
 } from '@nestjs/common';
@@ -13,6 +15,7 @@ import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { UpdateProfileDto } from './dto/update-profile.dto';
+import { UploadProfilePhotoDto } from './dto/upload-profile-photo.dto';
 import { ProfileService } from './profile.service';
 
 @Controller('profile')
@@ -53,5 +56,30 @@ export class ProfileController {
       updateProfileDto,
       requestId,
     );
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post('me/photo')
+  uploadMyProfilePhoto(
+    @CurrentUser() user: AuthenticatedUser,
+    @Body() uploadProfilePhotoDto: UploadProfilePhotoDto,
+    @Req() request: Request,
+  ) {
+    const requestId = request.header('x-request-id')?.trim() || randomUUID();
+    return this.profileService.uploadMyProfilePhoto(
+      user?.id,
+      uploadProfilePhotoDto,
+      requestId,
+    );
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Delete('me/photo')
+  removeMyProfilePhoto(
+    @CurrentUser() user: AuthenticatedUser,
+    @Req() request: Request,
+  ) {
+    const requestId = request.header('x-request-id')?.trim() || randomUUID();
+    return this.profileService.removeMyProfilePhoto(user?.id, requestId);
   }
 }

@@ -11,7 +11,12 @@ export class AppController {
   }
 
   @Get('health')
-  getReadiness(): { ok: true; timestamp: string; uptime: number } {
+  getReadiness(): Promise<{
+    ok: true;
+    database: 'up';
+    timestamp: string;
+    uptime: number;
+  }> {
     return this.appService.getReadiness();
   }
 }

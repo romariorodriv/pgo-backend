@@ -3,12 +3,15 @@ import {
   Controller,
   Delete,
   Get,
+  Headers,
   Patch,
   Post,
   UnauthorizedException,
   UseGuards,
 } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import { AuthService } from './auth.service';
+import { AppleLoginDto } from './dto/apple-login.dto';
 import { GoogleLoginDto } from './dto/google-login.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { LoginDto } from './dto/login.dto';
@@ -23,11 +26,13 @@ export class AuthController {
   constructor(private readonly authService: AuthService) {}
 
   @Post('register')
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
   register(@Body() registerDto: RegisterDto) {
     return this.authService.register(registerDto);
   }
 
   @Post('login')
+  @Throttle({ default: { limit: 8, ttl: 60_000 } })
   login(@Body() loginDto: LoginDto) {
     return this.authService.login(loginDto);
   }
@@ -37,7 +42,16 @@ export class AuthController {
     return this.authService.googleLogin(googleLoginDto);
   }
 
+  @Post('apple')
+  appleLogin(
+    @Headers('authorization') authorization: string | undefined,
+    @Body() appleLoginDto: AppleLoginDto,
+  ) {
+    return this.authService.appleLogin(authorization, appleLoginDto);
+  }
+
   @Post('forgot-password')
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
   forgotPassword(@Body() body: ForgotPasswordDto) {
     return this.authService.forgotPassword(body.email);
   }

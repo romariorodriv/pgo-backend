@@ -903,6 +903,94 @@ export class OpenMatchAlertsService {
     return this.findOne(id, userId);
   }
 
+  async getChatMessages(id: string, userId: string) {
+    const alert = await this.getChatAlertForMember(id, userId);
+    this.ensureChatIsReadable(alert);
+
+    const messages = await this.prisma.openMatchChatMessage.findMany({
+      where: { alertId: id },
+      include: {
+        user: {
+          select: {
+            id: true,
+            name: true,
+            profile: {
+              select: {
+                photoUrl: true,
+              },
+            },
+          },
+        },
+      },
+      orderBy: { createdAt: 'asc' },
+      take: 100,
+    });
+
+    return messages.map((message) => this.mapChatMessage(message));
+  }
+
+  async createChatMessage(id: string, userId: string, rawMessage: string) {
+    const alert = await this.getChatAlertForMember(id, userId);
+    this.ensureChatIsWritable(alert);
+
+    const message = rawMessage.trim().replace(/\s+/g, ' ');
+    if (!message) {
+      throw new BadRequestException('El mensaje no puede estar vacio');
+    }
+    if (message.length > 300) {
+      throw new BadRequestException('El mensaje no puede superar 300 caracteres');
+    }
+
+    const created = await this.prisma.openMatchChatMessage.create({
+      data: {
+        alertId: id,
+        userId,
+        message,
+      },
+      include: {
+        user: {
+          select: {
+            id: true,
+            name: true,
+            profile: {
+              select: {
+                photoUrl: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    const recipientIds = [
+      alert.organizerId,
+      ...alert.participants.map((item) => item.userId),
+    ].filter((recipientId, index, list) => {
+      return recipientId !== userId && list.indexOf(recipientId) === index;
+    });
+
+    void this.notificationsService.sendToUsers(recipientIds, {
+      title: `${created.user.name} escribio en el chat`,
+      body: message,
+      data: this.notificationData('OPEN_MATCH_CHAT_MESSAGE', id),
+    });
+
+    return this.mapChatMessage(created);
+  }
+
+  async cleanupExpiredChatMessages(now = new Date()) {
+    const expiresBefore = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+    return this.prisma.openMatchChatMessage.deleteMany({
+      where: {
+        alert: {
+          startsAt: {
+            lt: expiresBefore,
+          },
+        },
+      },
+    });
+  }
+
   private notificationData(type: string, alertId: string) {
     return {
       type,
@@ -961,6 +1049,25 @@ export class OpenMatchAlertsService {
         },
       },
       coordinationUpdates: {
+        include: {
+          user: {
+            select: {
+              id: true,
+              name: true,
+              profile: {
+                select: {
+                  photoUrl: true,
+                },
+              },
+            },
+          },
+        },
+        orderBy: {
+          createdAt: 'desc' as const,
+        },
+        take: 20,
+      },
+      chatMessages: {
         include: {
           user: {
             select: {
@@ -1062,6 +1169,84 @@ export class OpenMatchAlertsService {
           createdAt: update.createdAt,
         }),
       ),
+      chatMessages: (alert.chatMessages ?? [])
+        .slice()
+        .reverse()
+        .map((message: any) => this.mapChatMessage(message)),
+    };
+  }
+
+  private async getChatAlertForMember(id: string, userId: string) {
+    const alert = await this.prisma.openMatchAlert.findUnique({
+      where: { id },
+      include: {
+        organizer: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
+        participants: {
+          select: {
+            userId: true,
+          },
+        },
+      },
+    });
+
+    if (!alert || alert.status === OpenMatchAlertStatus.CANCELED) {
+      throw new NotFoundException('Partido abierto no encontrado');
+    }
+
+    const isMember =
+      alert.organizerId === userId ||
+      alert.participants.some((participant) => participant.userId === userId);
+    if (!isMember) {
+      throw new ForbiddenException(
+        'Solo los jugadores del partido pueden usar el chat',
+      );
+    }
+
+    return alert;
+  }
+
+  private ensureChatIsReadable(alert: {
+    startsAt: Date;
+    status: OpenMatchAlertStatus;
+  }) {
+    if (this.isChatExpired(alert.startsAt)) {
+      throw new BadRequestException('El chat de este partido ya expiro');
+    }
+  }
+
+  private ensureChatIsWritable(alert: {
+    startsAt: Date;
+    status: OpenMatchAlertStatus;
+  }) {
+    if (alert.status === OpenMatchAlertStatus.COMPLETED) {
+      throw new BadRequestException(
+        'No puedes escribir en un partido finalizado',
+      );
+    }
+    if (this.isChatExpired(alert.startsAt)) {
+      throw new BadRequestException('El chat de este partido ya expiro');
+    }
+  }
+
+  private isChatExpired(startsAt: Date, now = new Date()) {
+    return now.getTime() > startsAt.getTime() + 24 * 60 * 60 * 1000;
+  }
+
+  private mapChatMessage(message: any) {
+    return {
+      id: message.id,
+      message: message.message,
+      createdAt: message.createdAt,
+      user: {
+        id: message.user.id,
+        name: message.user.name,
+        photoUrl: message.user.profile?.photoUrl ?? null,
+      },
     };
   }
 

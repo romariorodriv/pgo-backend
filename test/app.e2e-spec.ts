@@ -17,6 +17,10 @@ describe('AppController (e2e)', () => {
     await app.init();
   });
 
+  afterEach(async () => {
+    await app.close();
+  });
+
   it('/ (GET)', () => {
     return request(app.getHttpServer()).get('/api').expect(200).expect({
       status: 'ok',
@@ -30,6 +34,7 @@ describe('AppController (e2e)', () => {
       .expect(200)
       .expect((response) => {
         expect(response.body.ok).toBe(true);
+        expect(response.body.database).toBe('up');
         expect(typeof response.body.timestamp).toBe('string');
         expect(typeof response.body.uptime).toBe('number');
       });

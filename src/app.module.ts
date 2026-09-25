@@ -15,27 +15,47 @@ import { SocialModule } from './social/social.module';
 import { TournamentsModule } from './tournaments/tournaments.module';
 import { OpenMatchAlertsModule } from './open-match-alerts/open-match-alerts.module';
 import { SupportModule } from './support/support.module';
+import { AdminModule } from './admin/admin.module';
+import { BookingModule } from './booking/booking.module';
 
 function validateEnvironment(config: Record<string, unknown>) {
-  const isProduction = String(config.NODE_ENV ?? '').toLowerCase() === 'production';
+  const value = (key: string) => {
+    const item = config[key];
+    return typeof item === 'string' ||
+      typeof item === 'number' ||
+      typeof item === 'boolean'
+      ? String(item)
+      : '';
+  };
+  const isProduction =
+    value('NODE_ENV').toLowerCase() === 'production';
   const required = ['DATABASE_URL', 'JWT_SECRET', 'CORS_ORIGINS'];
+  if (isProduction) {
+    required.push('FIREBASE_STORAGE_BUCKET');
+  }
 
   for (const key of required) {
-    if (!String(config[key] ?? '').trim()) {
+    if (!value(key).trim()) {
       throw new Error(`Missing required environment variable: ${key}`);
     }
   }
 
-  const jwtSecret = String(config.JWT_SECRET ?? '');
-  if (isProduction && (jwtSecret.length < 32 || jwtSecret.includes('change-me'))) {
+  const jwtSecret = value('JWT_SECRET');
+  if (
+    isProduction &&
+    (jwtSecret.length < 32 || jwtSecret.includes('change-me'))
+  ) {
     throw new Error('JWT_SECRET must be strong in production');
   }
 
-  const corsOrigins = String(config.CORS_ORIGINS ?? '')
+  const corsOrigins = value('CORS_ORIGINS')
     .split(',')
     .map((origin) => origin.trim())
     .filter(Boolean);
-  if (isProduction && corsOrigins.some((origin) => !origin.startsWith('https://'))) {
+  if (
+    isProduction &&
+    corsOrigins.some((origin) => !origin.startsWith('https://'))
+  ) {
     throw new Error('CORS_ORIGINS must use HTTPS in production');
   }
 
@@ -64,6 +84,8 @@ function validateEnvironment(config: Record<string, unknown>) {
     TournamentsModule,
     OpenMatchAlertsModule,
     SupportModule,
+    AdminModule,
+    BookingModule,
   ],
   controllers: [AppController, AppLinksController],
   providers: [

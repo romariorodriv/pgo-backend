@@ -28,20 +28,28 @@ async function bootstrap() {
       },
     ],
   });
-  const allowedOrigins = (process.env.CORS_ORIGINS ?? '')
-    .split(',')
+  const allowedOrigins = [
+    ...(process.env.CORS_ORIGINS ?? '').split(','),
+    ...(process.env.ADMIN_ALLOWED_ORIGINS ?? '').split(','),
+  ]
     .map((origin) => origin.trim())
     .filter(Boolean);
-  const isProduction = (process.env.NODE_ENV ?? '').toLowerCase() === 'production';
+  const isProduction =
+    (process.env.NODE_ENV ?? '').toLowerCase() === 'production';
   app.enableCors({
     origin(origin, callback) {
-      if (!origin || (!isProduction && allowedOrigins.length === 0) || allowedOrigins.includes(origin)) {
+      if (
+        !origin ||
+        (!isProduction && allowedOrigins.length === 0) ||
+        allowedOrigins.includes(origin)
+      ) {
         callback(null, true);
         return;
       }
-      callback(new Error('Origin not allowed by CORS'));
+      callback(null, false);
     },
     credentials: true,
+    allowedHeaders: ['Authorization', 'Content-Type', 'X-PGO-Admin-Request', 'X-PGO-Web-Request'],
   });
   app.use(json({ limit: '20mb' }));
   app.use(urlencoded({ extended: true, limit: '20mb' }));

@@ -157,7 +157,14 @@ export class MatchesService {
   findMyMatches(userId: string) {
     return this.prisma.match.findMany({
       where: {
-        createdById: userId,
+        OR: [
+          { createdById: userId },
+          {
+            participants: {
+              some: { userId },
+            },
+          },
+        ],
       },
       orderBy: {
         playedAt: 'desc',

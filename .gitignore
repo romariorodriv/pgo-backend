@@ -5,3 +5,7 @@ dist
 .DS_Store
 
 /generated/prisma
+
+# Apple private keys
+*.p8
+AuthKey_*.p8

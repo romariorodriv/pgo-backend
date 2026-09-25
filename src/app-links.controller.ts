@@ -37,7 +37,7 @@ export class AppLinksController {
           ? [
               {
                 appIDs: [`${teamId}.com.pgo.app`],
-                components: [{ '/': '/partidos/*' }],
+                components: [{ '/': '/partidos/*' }, { '/': '/torneos/*' }],
               },
             ]
           : [],

@@ -6,16 +6,24 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
+import { randomUUID } from 'crypto';
+import { readFileSync } from 'fs';
 import {
   FriendshipStatus,
   MatchParticipant,
   MatchStatus,
   Prisma,
   Profile,
+  TournamentMatchStatus,
+  TournamentRegistrationMode,
+  TournamentRegistrationStatus,
   User,
 } from '@prisma/client';
+import { cert, getApps, initializeApp, type App } from 'firebase-admin/app';
+import { getStorage } from 'firebase-admin/storage';
 import { PrismaService } from '../prisma/prisma.service';
 import { UpdateProfileDto } from './dto/update-profile.dto';
+import { UploadProfilePhotoDto } from './dto/upload-profile-photo.dto';
 
 type UserWithProfile = User & {
   profile: Profile | null;
@@ -47,6 +55,7 @@ type MatchParticipantWithMatch = MatchParticipant & {
 @Injectable()
 export class ProfileService {
   private readonly logger = new Logger(ProfileService.name);
+  private firebaseApp?: App;
 
   constructor(private readonly prisma: PrismaService) {}
 
@@ -256,6 +265,96 @@ export class ProfileService {
     }
   }
 
+  async uploadMyProfilePhoto(
+    userId: string | undefined,
+    uploadProfilePhotoDto: UploadProfilePhotoDto,
+    requestId = 'untracked',
+  ) {
+    if (!userId) {
+      throw new NotFoundException({
+        code: 'user_not_found',
+        message: 'Usuario no encontrado',
+        requestId,
+      });
+    }
+
+    const image = this.parseProfilePhotoDataUrl(uploadProfilePhotoDto.dataUrl);
+    const userExists = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true },
+    });
+    if (!userExists) {
+      throw new NotFoundException({
+        code: 'user_not_found',
+        message: 'Usuario no encontrado',
+        requestId,
+      });
+    }
+
+    try {
+      const bucket = this.getFirebaseStorageBucket();
+      const token = randomUUID();
+      const extension = this.extensionForContentType(image.contentType);
+      const objectName = `profile-photos/${userId}/${Date.now()}-${token}.${extension}`;
+      const file = bucket.file(objectName);
+      await file.save(image.buffer, {
+        contentType: image.contentType,
+        resumable: false,
+        metadata: {
+          cacheControl: 'public, max-age=31536000',
+          metadata: {
+            firebaseStorageDownloadTokens: token,
+          },
+        },
+      });
+
+      const encodedObjectName = encodeURIComponent(objectName);
+      const photoUrl =
+        `https://firebasestorage.googleapis.com/v0/b/${bucket.name}` +
+        `/o/${encodedObjectName}?alt=media&token=${token}`;
+
+      await this.prisma.profile.upsert({
+        where: { userId },
+        create: { userId, photoUrl },
+        update: { photoUrl },
+      });
+
+      return this.getMyProfile(userId);
+    } catch (error) {
+      this.logProfileUpdateError(error, requestId);
+      return this.storeProfilePhotoDataUrl(userId, image, requestId);
+    }
+  }
+
+  async removeMyProfilePhoto(
+    userId: string | undefined,
+    requestId = 'untracked',
+  ) {
+    if (!userId) {
+      throw new NotFoundException({
+        code: 'user_not_found',
+        message: 'Usuario no encontrado',
+        requestId,
+      });
+    }
+
+    try {
+      await this.prisma.profile.upsert({
+        where: { userId },
+        create: { userId, photoUrl: null },
+        update: { photoUrl: null },
+      });
+      return this.getMyProfile(userId);
+    } catch (error) {
+      this.logProfileUpdateError(error, requestId);
+      throw new InternalServerErrorException({
+        code: 'profile_photo_remove_failed',
+        message: 'No se pudo quitar la foto de perfil.',
+        requestId,
+      });
+    }
+  }
+
   private summarizePayload(payload: object) {
     const fields = Object.keys(payload).sort().join(',');
     const types = Object.entries(payload)
@@ -277,6 +376,113 @@ export class ProfileService {
     return Object.fromEntries(
       Object.entries(value).filter(([, item]) => item !== undefined),
     ) as Partial<T>;
+  }
+
+  private parseProfilePhotoDataUrl(dataUrl: string) {
+    const match = dataUrl.match(
+      /^data:(image\/(?:jpeg|jpg|png|webp));base64,([a-zA-Z0-9+/=\r\n]+)$/,
+    );
+    if (!match) {
+      throw new BadRequestException({
+        code: 'invalid_profile_photo',
+        message: 'La foto debe ser una imagen JPG, PNG o WebP.',
+      });
+    }
+
+    const contentType = match[1] === 'image/jpg' ? 'image/jpeg' : match[1];
+    const buffer = Buffer.from(match[2].replace(/\s/g, ''), 'base64');
+    if (buffer.length < 1024 || buffer.length > 1_000_000) {
+      throw new BadRequestException({
+        code: 'invalid_profile_photo_size',
+        message: 'La foto debe pesar menos de 1 MB.',
+      });
+    }
+
+    return { contentType, buffer };
+  }
+
+  private extensionForContentType(contentType: string) {
+    switch (contentType) {
+      case 'image/png':
+        return 'png';
+      case 'image/webp':
+        return 'webp';
+      default:
+        return 'jpg';
+    }
+  }
+
+  private async storeProfilePhotoDataUrl(
+    userId: string,
+    image: { contentType: string; buffer: Buffer },
+    requestId: string,
+  ) {
+    try {
+      const photoUrl = `data:${image.contentType};base64,${image.buffer.toString('base64')}`;
+      await this.prisma.profile.upsert({
+        where: { userId },
+        create: { userId, photoUrl },
+        update: { photoUrl },
+      });
+      this.logger.warn(
+        `profile_photo_upload_fallback requestId=${requestId} storage=firebase_unavailable`,
+      );
+      return this.getMyProfile(userId);
+    } catch (fallbackError) {
+      this.logProfileUpdateError(fallbackError, requestId);
+      throw new InternalServerErrorException({
+        code: 'profile_photo_upload_failed',
+        message: 'No se pudo actualizar la foto de perfil.',
+        requestId,
+      });
+    }
+  }
+
+  private getFirebaseStorageBucket() {
+    const app = this.getFirebaseApp();
+    const bucketName = this.resolveFirebaseStorageBucketName();
+    return getStorage(app).bucket(bucketName);
+  }
+
+  private getFirebaseApp() {
+    if (this.firebaseApp) return this.firebaseApp;
+
+    const existing = getApps()[0];
+    if (existing) {
+      this.firebaseApp = existing;
+      return existing;
+    }
+
+    const serviceAccountJson = process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
+    const serviceAccountPath = process.env.FIREBASE_SERVICE_ACCOUNT_PATH;
+    const credentials = serviceAccountJson
+      ? JSON.parse(serviceAccountJson)
+      : serviceAccountPath
+        ? JSON.parse(readFileSync(serviceAccountPath, 'utf8'))
+        : undefined;
+
+    if (!credentials) {
+      throw new Error('Firebase service account is not configured');
+    }
+
+    this.firebaseApp = initializeApp({
+      credential: cert(credentials),
+      storageBucket: this.resolveFirebaseStorageBucketName(
+        credentials.project_id,
+      ),
+    });
+    return this.firebaseApp;
+  }
+
+  private resolveFirebaseStorageBucketName(projectId?: string) {
+    const configured = process.env.FIREBASE_STORAGE_BUCKET?.trim();
+    if (configured) return configured;
+    const resolvedProjectId =
+      projectId?.trim() || process.env.FIREBASE_PROJECT_ID?.trim();
+    if (!resolvedProjectId) {
+      throw new Error('Firebase storage bucket is not configured');
+    }
+    return `${resolvedProjectId}.firebasestorage.app`;
   }
 
   private normalizePhotoUrl(value: unknown) {
@@ -495,9 +701,214 @@ export class ProfileService {
       ...(take ? { take } : {}),
     });
 
-    return participations.map((participation) =>
+    const regularHistory = participations.map((participation) =>
       this.mapMatchHistoryItem(participation),
     );
+
+    const tournamentHistory = await this.getTournamentMatchHistory(userId);
+    const history = [...regularHistory, ...tournamentHistory].sort(
+      (left, right) =>
+        new Date(right.playedAt).getTime() - new Date(left.playedAt).getTime(),
+    );
+
+    return take ? history.slice(0, take) : history;
+  }
+
+  private async getTournamentMatchHistory(userId: string) {
+    const registrations = await this.prisma.tournamentRegistration.findMany({
+      where: {
+        status: TournamentRegistrationStatus.CONFIRMED,
+        mode: TournamentRegistrationMode.WITH_PARTNER,
+        partnerUserId: { not: null },
+        OR: [{ userId }, { partnerUserId: userId }],
+      },
+      include: {
+        user: {
+          select: {
+            id: true,
+            name: true,
+            profile: { select: { photoUrl: true, category: true } },
+          },
+        },
+        partnerUser: {
+          select: {
+            id: true,
+            name: true,
+            profile: { select: { photoUrl: true, category: true } },
+          },
+        },
+        tournament: {
+          include: {
+            registrations: {
+              where: {
+                status: TournamentRegistrationStatus.CONFIRMED,
+                mode: TournamentRegistrationMode.WITH_PARTNER,
+                partnerUserId: { not: null },
+              },
+              include: {
+                user: {
+                  select: {
+                    id: true,
+                    name: true,
+                    profile: { select: { photoUrl: true, category: true } },
+                  },
+                },
+                partnerUser: {
+                  select: {
+                    id: true,
+                    name: true,
+                    profile: { select: { photoUrl: true, category: true } },
+                  },
+                },
+              },
+            },
+            matches: {
+              where: { status: TournamentMatchStatus.FINISHED },
+            },
+          },
+        },
+      },
+    });
+
+    return registrations.flatMap((registration) => {
+      const teamLabel =
+        `${registration.user.name} / ${registration.partnerUser!.name}`.trim();
+      const teamByLabel = new Map(
+        registration.tournament.registrations.map((item) => [
+          `${item.user.name} / ${item.partnerUser!.name}`.trim(),
+          item,
+        ]),
+      );
+
+      return registration.tournament.matches
+        .filter(
+          (match) =>
+            match.teamOneLabel.trim() === teamLabel ||
+            match.teamTwoLabel.trim() === teamLabel,
+        )
+        .map((match) => {
+          const selfIsTeamOne = match.teamOneLabel.trim() === teamLabel;
+          const winnerTeam =
+            match.winnerLabel?.trim() === match.teamOneLabel.trim()
+              ? 1
+              : match.winnerLabel?.trim() === match.teamTwoLabel.trim()
+                ? 2
+                : null;
+          const didWin =
+            winnerTeam != null && winnerTeam === (selfIsTeamOne ? 1 : 2);
+          const opponentLabel = selfIsTeamOne
+            ? match.teamTwoLabel.trim()
+            : match.teamOneLabel.trim();
+          const participants = [
+            ...this.tournamentHistoryParticipants(
+              teamByLabel.get(match.teamOneLabel.trim()),
+              match.teamOneLabel,
+              1,
+              1,
+            ),
+            ...this.tournamentHistoryParticipants(
+              teamByLabel.get(match.teamTwoLabel.trim()),
+              match.teamTwoLabel,
+              2,
+              3,
+            ),
+          ];
+
+          return {
+            id: `tournament:${registration.tournament.id}:${match.id}`,
+            tournamentId: registration.tournament.id,
+            tournamentMatchId: match.id,
+            clubName: registration.tournament.location,
+            playedAt: match.scheduledAt,
+            matchType: 'TOURNAMENT',
+            status: 'COMPLETED',
+            winnerTeam,
+            games: this.parseTournamentScore(match.score),
+            result: didWin ? 'WIN' : 'LOSS',
+            title: didWin
+              ? `Ganaste vs ${opponentLabel || 'rivales'}`
+              : `Perdiste vs ${opponentLabel || 'rivales'}`,
+            subtitle: `${registration.tournament.title} - ${this.getTournamentStageLabel(match.stage)}`,
+            xpDelta: didWin ? 40 : -20,
+            participants,
+          };
+        });
+    });
+  }
+
+  private tournamentHistoryParticipants(
+    registration:
+      | {
+          user: {
+            id: string;
+            name: string;
+            profile: {
+              photoUrl: string | null;
+              category: string | null;
+            } | null;
+          };
+          partnerUser: {
+            id: string;
+            name: string;
+            profile: {
+              photoUrl: string | null;
+              category: string | null;
+            } | null;
+          } | null;
+        }
+      | undefined,
+    fallbackLabel: string,
+    team: number,
+    firstSlot: number,
+  ) {
+    if (registration?.partnerUser) {
+      return [
+        {
+          slot: firstSlot,
+          team,
+          user: registration.user,
+        },
+        {
+          slot: firstSlot + 1,
+          team,
+          user: registration.partnerUser,
+        },
+      ];
+    }
+
+    const names = fallbackLabel
+      .split('/')
+      .map((item) => item.trim())
+      .filter(Boolean);
+
+    return [0, 1].map((index) => ({
+      slot: firstSlot + index,
+      team,
+      user: {
+        id: `${fallbackLabel}-${index}`,
+        name: names[index] ?? `Jugador ${firstSlot + index}`,
+        profile: null,
+      },
+    }));
+  }
+
+  private parseTournamentScore(score: string | null) {
+    if (!score?.trim()) return [];
+    return [...score.matchAll(/(\d{1,2})\s*[-:]\s*(\d{1,2})/g)].map(
+      (match) => ({
+        team1: Number(match[1]),
+        team2: Number(match[2]),
+      }),
+    );
+  }
+
+  private getTournamentStageLabel(stage: string) {
+    if (stage === 'final') return 'Final';
+    if (stage.startsWith('juego-')) {
+      const number = Number(stage.replace('juego-', ''));
+      return Number.isFinite(number) ? `Juego ${number}` : stage;
+    }
+    return stage;
   }
 
   private mapMatchHistoryItem(participation: MatchParticipantWithMatch) {

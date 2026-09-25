@@ -17,7 +17,7 @@ Crea o ajusta tu `.env`:
 ```env
 DATABASE_URL="postgresql://postgres:postgres@localhost:5432/pgo_backend?schema=public"
 JWT_SECRET="change-me-in-production"
-JWT_EXPIRES_IN=900
+JWT_EXPIRES_IN=15m
 PORT=3000
 ```
 
