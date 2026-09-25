@@ -105,14 +105,33 @@ model User {
   pushDeviceTokens                 PushDeviceToken[]
   refreshTokens                    RefreshToken[]
   passwordResetTokens              PasswordResetToken[]
+  authIdentities                   AuthIdentity[]
   notifications                    AppNotification[]
   supportReports                   SupportReport[]
   organizedOpenMatchAlerts         OpenMatchAlert[]              @relation("OpenMatchOrganizer")
   openMatchJoins                   OpenMatchParticipant[]
   openMatchInvitations             OpenMatchInvitation[]         @relation("OpenMatchInvitee")
   openMatchCoordinationUpdates     OpenMatchCoordinationUpdate[]
+  openMatchChatMessages            OpenMatchChatMessage[]
 
   @@map("users")
+}
+
+model AuthIdentity {
+  id             String   @id @default(uuid())
+  userId         String   @map("user_id")
+  provider       String
+  providerUserId String   @map("provider_user_id")
+  firebaseUid    String?  @unique @map("firebase_uid")
+  email          String?
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerUserId])
+  @@index([userId])
+  @@map("auth_identities")
 }
 
 model RefreshToken {
@@ -308,6 +327,7 @@ model OpenMatchAlert {
   participants        OpenMatchParticipant[]
   invitations         OpenMatchInvitation[]
   coordinationUpdates OpenMatchCoordinationUpdate[]
+  chatMessages        OpenMatchChatMessage[]
 
   @@index([status, startsAt])
   @@index([organizerId])
@@ -327,6 +347,20 @@ model OpenMatchCoordinationUpdate {
   @@index([alertId, createdAt])
   @@index([userId])
   @@map("open_match_coordination_updates")
+}
+
+model OpenMatchChatMessage {
+  id        String   @id @default(uuid())
+  alertId   String   @map("alert_id")
+  userId    String   @map("user_id")
+  message   String
+  createdAt DateTime @default(now()) @map("created_at")
+  alert     OpenMatchAlert @relation(fields: [alertId], references: [id], onDelete: Cascade)
+  user      User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([alertId, createdAt])
+  @@index([userId])
+  @@map("open_match_chat_messages")
 }
 
 model OpenMatchInvitation {

@@ -1,5 +1,9 @@
 import { OpenMatchAlertStatus } from '@prisma/client';
-import { ConflictException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+} from '@nestjs/common';
 import { OpenMatchAlertsService } from './open-match-alerts.service';
 
 describe('OpenMatchAlertsService public preview', () => {
@@ -109,5 +113,121 @@ describe('OpenMatchAlertsService write safety', () => {
       deleted: true,
     });
     expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+});
+
+describe('OpenMatchAlertsService chat', () => {
+  const activeAlert = {
+    id: 'alert-1',
+    organizerId: 'organizer-1',
+    status: OpenMatchAlertStatus.OPEN,
+    startsAt: new Date(Date.now() + 60 * 60 * 1000),
+    organizer: { id: 'organizer-1', name: 'Organizador' },
+    participants: [{ userId: 'player-1' }],
+  };
+
+  function createPrisma(alert = activeAlert) {
+    return {
+      openMatchAlert: {
+        findUnique: jest.fn().mockResolvedValue(alert),
+      },
+      openMatchChatMessage: {
+        findMany: jest.fn().mockResolvedValue([]),
+        create: jest.fn().mockImplementation(({ data }) =>
+          Promise.resolve({
+            id: 'chat-1',
+            message: data.message,
+            createdAt: new Date('2026-07-09T10:00:00.000Z'),
+            user: {
+              id: data.userId,
+              name: 'Jugador',
+              profile: { photoUrl: null },
+            },
+          }),
+        ),
+        deleteMany: jest.fn().mockResolvedValue({ count: 2 }),
+      },
+    };
+  }
+
+  it('allows confirmed participants to send normalized chat messages', async () => {
+    const prisma = createPrisma();
+    const notifications = { sendToUsers: jest.fn() };
+    const service = new OpenMatchAlertsService(
+      prisma as never,
+      notifications as never,
+    );
+
+    const result = await service.createChatMessage(
+      'alert-1',
+      'player-1',
+      '  Voy   llegando  ',
+    );
+
+    expect(prisma.openMatchChatMessage.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: {
+          alertId: 'alert-1',
+          userId: 'player-1',
+          message: 'Voy llegando',
+        },
+      }),
+    );
+    expect(result.message).toBe('Voy llegando');
+    expect(notifications.sendToUsers).toHaveBeenCalledWith(
+      ['organizer-1'],
+      expect.objectContaining({
+        data: expect.objectContaining({ type: 'OPEN_MATCH_CHAT_MESSAGE' }),
+      }),
+    );
+  });
+
+  it('blocks users outside the open match chat', async () => {
+    const service = new OpenMatchAlertsService(
+      createPrisma() as never,
+      { sendToUsers: jest.fn() } as never,
+    );
+
+    await expect(
+      service.getChatMessages('alert-1', 'stranger-1'),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  it('blocks writing after the chat expiration window', async () => {
+    const expiredAlert = {
+      ...activeAlert,
+      startsAt: new Date(Date.now() - 25 * 60 * 60 * 1000),
+    };
+    const service = new OpenMatchAlertsService(
+      createPrisma(expiredAlert) as never,
+      { sendToUsers: jest.fn() } as never,
+    );
+
+    await expect(
+      service.createChatMessage('alert-1', 'player-1', 'Hola'),
+    ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('cleans chat messages for alerts older than 24 hours', async () => {
+    const prisma = createPrisma();
+    const service = new OpenMatchAlertsService(
+      prisma as never,
+      { sendToUsers: jest.fn() } as never,
+    );
+
+    const result = await service.cleanupExpiredChatMessages(
+      new Date('2026-07-09T12:00:00.000Z'),
+    );
+
+    expect(result.count).toBe(2);
+    expect(prisma.openMatchChatMessage.deleteMany).toHaveBeenCalledWith({
+      where: {
+        alert: {
+          startsAt: {
+            lt: new Date('2026-07-08T12:00:00.000Z'),
+          },
+        },
+      },
+    });
   });
 });

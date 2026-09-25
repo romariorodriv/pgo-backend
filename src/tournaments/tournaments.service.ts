@@ -1,4 +1,4 @@
-﻿import {
+import {
   BadRequestException,
   ConflictException,
   Injectable,
@@ -64,10 +64,13 @@ export type TournamentSharePreview = {
   id: string;
   slug: string | null;
   title: string;
+  modality: string;
   location: string;
   district: string;
   city: string;
   startsAt: Date;
+  entryFee: number;
+  category: string;
   photoUrl: string | null;
 };
 
@@ -220,6 +223,9 @@ export class TournamentsService {
     const tournament = await this.prisma.tournament.findFirst({
       where: {
         OR: [{ id }, { slug: id }],
+        status: {
+          not: TournamentStatus.CANCELED,
+        },
       },
       include: {
         createdBy: {
@@ -280,15 +286,21 @@ export class TournamentsService {
     const tournament = await this.prisma.tournament.findFirst({
       where: {
         OR: [{ id: identifier }, { slug: identifier }],
+        status: {
+          not: TournamentStatus.CANCELED,
+        },
       },
       select: {
         id: true,
         slug: true,
         title: true,
+        modality: true,
         location: true,
         district: true,
         city: true,
         startsAt: true,
+        entryFee: true,
+        category: true,
         photoUrl: true,
       },
     });
@@ -376,12 +388,13 @@ export class TournamentsService {
   async getMyAlerts(userId: string) {
     const tournaments = await this.prisma.tournament.findMany({
       where: {
+        status: {
+          not: TournamentStatus.CANCELED,
+        },
         registrations: {
           some: {
             OR: [{ userId }, { partnerUserId: userId }],
-            status: {
-              not: TournamentRegistrationStatus.CANCELED,
-            },
+            status: TournamentRegistrationStatus.CONFIRMED,
           },
         },
       },
@@ -391,9 +404,7 @@ export class TournamentsService {
       include: {
         registrations: {
           where: {
-            status: {
-              not: TournamentRegistrationStatus.CANCELED,
-            },
+            status: TournamentRegistrationStatus.CONFIRMED,
           },
           include: {
             user: {
@@ -1495,7 +1506,7 @@ export class TournamentsService {
     }
 
     if (!['1RA', '2DA', '3RA', '4TA', '5TA', '6TA'].includes(input.category)) {
-      throw new BadRequestException('Selecciona una categorÃ­a vÃ¡lida');
+      throw new BadRequestException('Selecciona una categoría válida');
     }
 
     if (!Number.isInteger(input.playerCapacity) || input.playerCapacity < 2) {
@@ -1503,11 +1514,11 @@ export class TournamentsService {
     }
 
     if (!Number.isInteger(input.entryFee) || input.entryFee < 0) {
-      throw new BadRequestException('El costo de inscripciÃ³n no es vÃ¡lido');
+      throw new BadRequestException('El costo de inscripción no es válido');
     }
 
     if (Number.isNaN(input.startsAt.getTime())) {
-      throw new BadRequestException('La fecha del torneo no es vÃ¡lida');
+      throw new BadRequestException('La fecha del torneo no es válida');
     }
 
     if (input.startsAt.getTime() <= Date.now()) {
@@ -1535,13 +1546,13 @@ export class TournamentsService {
       body.category != null &&
       !['1RA', '2DA', '3RA', '4TA', '5TA', '6TA'].includes(body.category)
     ) {
-      throw new BadRequestException('Selecciona una categorÃ­a vÃ¡lida');
+      throw new BadRequestException('Selecciona una categoría válida');
     }
 
     if (body.startsAt != null) {
       const startsAt = new Date(body.startsAt);
       if (Number.isNaN(startsAt.getTime())) {
-        throw new BadRequestException('La fecha del torneo no es vÃ¡lida');
+        throw new BadRequestException('La fecha del torneo no es válida');
       }
       if (startsAt.getTime() <= Date.now()) {
         throw new BadRequestException('La fecha y hora deben ser futuras');
@@ -1582,8 +1593,13 @@ export class TournamentsService {
   private async ensureTournamentExists(
     tournamentId: string,
   ): Promise<AdminTournamentSelect> {
-    const tournament = await this.prisma.tournament.findUnique({
-      where: { id: tournamentId },
+    const tournament = await this.prisma.tournament.findFirst({
+      where: {
+        id: tournamentId,
+        status: {
+          not: TournamentStatus.CANCELED,
+        },
+      },
       select: {
         id: true,
         title: true,
@@ -2079,8 +2095,8 @@ export class TournamentsService {
   ) {
     await Promise.all([
       this.notificationsService.sendToUser(user.id, {
-        title: 'ðŸŽ‰ Â¡Te encontramos dupla!',
-        body: 'Completa tu inscripciÃ³n para asegurar tu cupo',
+        title: '¡Te encontramos dupla!',
+        body: 'Completa tu inscripción para asegurar tu cupo',
         data: {
           type: 'tournament_pairing_created',
           tournamentId,
@@ -2089,8 +2105,8 @@ export class TournamentsService {
         },
       }),
       this.notificationsService.sendToUser(partner.id, {
-        title: 'ðŸŽ‰ Â¡Te encontramos dupla!',
-        body: 'Completa tu inscripciÃ³n para asegurar tu cupo',
+        title: '¡Te encontramos dupla!',
+        body: 'Completa tu inscripción para asegurar tu cupo',
         data: {
           type: 'tournament_pairing_created',
           tournamentId,
@@ -2112,7 +2128,7 @@ export class TournamentsService {
       () => {
         void Promise.all([
           this.notificationsService.sendToUser(user.id, {
-            title: 'â³ Tu dupla estÃ¡ esperando',
+            title: 'Tu dupla está esperando',
             body: 'Confirma antes de perder el cupo',
             data: {
               type: 'tournament_pairing_reminder',
@@ -2122,7 +2138,7 @@ export class TournamentsService {
             },
           }),
           this.notificationsService.sendToUser(partner.id, {
-            title: 'â³ Tu dupla estÃ¡ esperando',
+            title: 'Tu dupla está esperando',
             body: 'Confirma antes de perder el cupo',
             data: {
               type: 'tournament_pairing_reminder',
@@ -2146,7 +2162,7 @@ export class TournamentsService {
   ) {
     await Promise.all([
       this.notificationsService.sendToUser(user.id, {
-        title: 'âš ï¸ Tu pareja ya no estÃ¡ disponible',
+        title: 'Tu pareja ya no está disponible',
         body: 'Buscando nueva dupla',
         data: {
           type: 'tournament_pairing_canceled',
@@ -2155,7 +2171,7 @@ export class TournamentsService {
         },
       }),
       this.notificationsService.sendToUser(partner.id, {
-        title: 'âš ï¸ Tu pareja ya no estÃ¡ disponible',
+        title: 'Tu pareja ya no está disponible',
         body: 'Buscando nueva dupla',
         data: {
           type: 'tournament_pairing_canceled',
@@ -2224,6 +2240,10 @@ export class TournamentsService {
     }
 
     if (tournament.status === TournamentStatus.COMPLETED) {
+      if (involvedMatches.length === 0) {
+        return null;
+      }
+
       const finalMatch = tournament.matches
         .filter((match) => match.stage === 'final')
         .sort(

@@ -3,12 +3,14 @@ import {
   Controller,
   Delete,
   Get,
+  Headers,
   Patch,
   Post,
   UnauthorizedException,
   UseGuards,
 } from '@nestjs/common';
 import { AuthService } from './auth.service';
+import { AppleLoginDto } from './dto/apple-login.dto';
 import { GoogleLoginDto } from './dto/google-login.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { LoginDto } from './dto/login.dto';
@@ -35,6 +37,14 @@ export class AuthController {
   @Post('google')
   googleLogin(@Body() googleLoginDto: GoogleLoginDto) {
     return this.authService.googleLogin(googleLoginDto);
+  }
+
+  @Post('apple')
+  appleLogin(
+    @Headers('authorization') authorization: string | undefined,
+    @Body() appleLoginDto: AppleLoginDto,
+  ) {
+    return this.authService.appleLogin(authorization, appleLoginDto);
   }
 
   @Post('forgot-password')

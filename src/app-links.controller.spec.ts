@@ -29,7 +29,9 @@ describe('AppLinksController', () => {
     expect(result.applinks.details).toEqual([
       {
         appIDs: ['TEAM123.com.pgo.app'],
-        components: [{ '/': '/partidos/*' }],
+        components: [{ '/': '/partidos/*' }, { '/': '/torneos/*' }],
+        appID: 'TEAM123.com.pgo.app',
+        paths: ['/partidos/*', '/torneos/*'],
       },
     ]);
   });
