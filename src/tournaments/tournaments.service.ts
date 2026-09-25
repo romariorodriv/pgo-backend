@@ -191,11 +191,11 @@ export class TournamentsService {
   findAll() {
     return this.prisma.tournament.findMany({
       where: {
-        status: {
-          notIn: [TournamentStatus.CANCELED, TournamentStatus.COMPLETED],
-        },
         startsAt: {
           gt: new Date(),
+        },
+        status: {
+          notIn: [TournamentStatus.CANCELED, TournamentStatus.COMPLETED],
         },
       },
       orderBy: {

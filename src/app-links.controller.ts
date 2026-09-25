@@ -1,8 +1,8 @@
 import { Controller, Get, Header } from '@nestjs/common';
 
-@Controller('.well-known')
+@Controller()
 export class AppLinksController {
-  @Get('assetlinks.json')
+  @Get('.well-known/assetlinks.json')
   @Header('Content-Type', 'application/json')
   getAssetLinks() {
     const packageName = 'com.pgo.app';
@@ -27,7 +27,7 @@ export class AppLinksController {
     ];
   }
 
-  @Get('apple-app-site-association')
+  @Get(['.well-known/apple-app-site-association', 'apple-app-site-association'])
   @Header('Content-Type', 'application/json')
   getAppleAppSiteAssociation() {
     const teamId = process.env.APPLE_TEAM_ID?.trim();
@@ -38,6 +38,8 @@ export class AppLinksController {
               {
                 appIDs: [`${teamId}.com.pgo.app`],
                 components: [{ '/': '/partidos/*' }, { '/': '/torneos/*' }],
+                appID: `${teamId}.com.pgo.app`,
+                paths: ['/partidos/*', '/torneos/*'],
               },
             ]
           : [],

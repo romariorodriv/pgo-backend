@@ -23,9 +23,8 @@ export class TournamentShareController {
     const isAndroid = /android/i.test(userAgent);
     const isIos = /iphone|ipad|ipod/i.test(userAgent);
     const storeUrl = this.storeUrlForPlatform(isIos, isAndroid);
-    const androidAppIdentifier = tournament.id;
     const appUrl = isAndroid
-      ? this.buildAndroidIntentUrl(androidAppIdentifier, storeUrl ?? publicUrl)
+      ? this.buildAndroidIntentUrl(tournament.id, storeUrl ?? publicUrl)
       : isIos
         ? this.buildCustomSchemeUrl(publicSlug)
         : publicUrl;
@@ -58,7 +57,7 @@ export class TournamentShareController {
   <meta property="og:image:width" content="1200">
   <meta property="og:image:height" content="630">
   <meta property="og:image:alt" content="${this.escapeHtml(tournament.title)}">
-  <meta property="al:android:url" content="${this.escapeHtml(this.buildCustomSchemeUrl(androidAppIdentifier))}">
+  <meta property="al:android:url" content="${this.escapeHtml(this.buildCustomSchemeUrl(tournament.id))}">
   <meta property="al:android:package" content="com.pgo.app">
   <meta property="al:android:app_name" content="PGO">
   <meta property="al:ios:url" content="${this.escapeHtml(this.buildCustomSchemeUrl(publicSlug))}">
@@ -110,7 +109,7 @@ export class TournamentShareController {
       </div>
     </section>
   </main>
-  ${this.autoOpenScript(appUrl, storeUrl, isAndroid)}
+  ${this.autoOpenScript(appUrl, storeUrl, isAndroid || isIos)}
 </body>
 </html>`);
   }

@@ -54,18 +54,18 @@ describe('TournamentsService MVP guards', () => {
     ).rejects.toThrow('El torneo ya no tiene cupos disponibles');
   });
 
-  it('excludes canceled, completed and expired tournaments from the public list', async () => {
+  it('excludes expired, canceled and completed tournaments from the public list', async () => {
     prisma.tournament.findMany.mockResolvedValue([]);
 
     await expect(service.findAll()).resolves.toEqual([]);
     expect(prisma.tournament.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: {
-          status: {
-            notIn: [TournamentStatus.CANCELED, TournamentStatus.COMPLETED],
-          },
           startsAt: {
             gt: expect.any(Date),
+          },
+          status: {
+            notIn: [TournamentStatus.CANCELED, TournamentStatus.COMPLETED],
           },
         },
       }),
