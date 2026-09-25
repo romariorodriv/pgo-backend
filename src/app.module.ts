@@ -21,15 +21,23 @@ import { BookingModule } from './booking/booking.module';
 function validateEnvironment(config: Record<string, unknown>) {
   const value = (key: string) => {
     const item = config[key];
+
     return typeof item === 'string' ||
       typeof item === 'number' ||
       typeof item === 'boolean'
       ? String(item)
       : '';
   };
+
   const isProduction =
     value('NODE_ENV').toLowerCase() === 'production';
-  const required = ['DATABASE_URL', 'JWT_SECRET', 'CORS_ORIGINS'];
+
+  const required = [
+    'DATABASE_URL',
+    'JWT_SECRET',
+    'CORS_ORIGINS',
+  ];
+
   if (isProduction) {
     required.push('FIREBASE_STORAGE_BUCKET');
   }
@@ -41,9 +49,16 @@ function validateEnvironment(config: Record<string, unknown>) {
   }
 
   const jwtSecret = value('JWT_SECRET');
+
+  const allowLegacyJwtSecret =
+    value('ALLOW_LEGACY_JWT_SECRET').toLowerCase() === 'true';
+
   if (
     isProduction &&
-    (jwtSecret.length < 32 || jwtSecret.includes('change-me'))
+    (
+      jwtSecret.includes('change-me') ||
+      (jwtSecret.length < 32 && !allowLegacyJwtSecret)
+    )
   ) {
     throw new Error('JWT_SECRET must be strong in production');
   }
@@ -52,6 +67,7 @@ function validateEnvironment(config: Record<string, unknown>) {
     .split(',')
     .map((origin) => origin.trim())
     .filter(Boolean);
+
   if (
     isProduction &&
     corsOrigins.some((origin) => !origin.startsWith('https://'))
