@@ -1,3 +1,5 @@
+import { AdminPlatformController } from './platform/admin-platform.controller';
+import { AdminPlatformService } from './platform/admin-platform.service';
 import { Module } from '@nestjs/common';
 import { JwtModule } from '@nestjs/jwt';
 import { PassportModule } from '@nestjs/passport';
@@ -17,8 +19,9 @@ import { AdminRolesGuard } from './guards/admin-roles.guard';
 
 @Module({
   imports: [PassportModule, JwtModule.register({})],
-  controllers: [AdminAuthController, AdminDashboardController],
+  controllers: [AdminAuthController, AdminDashboardController, AdminPlatformController],
   providers: [
+    AdminPlatformService,
     AdminConfig,
     AdminAuthRepository,
     AdminAuthService,
