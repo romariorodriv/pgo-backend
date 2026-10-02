@@ -24,6 +24,7 @@ import {
   SetClubStatusDto,
   SetSchedulesDto,
   UpdateCourtDto,
+  UpdatePriceRuleDto,
 } from './booking.dto';
 import { ClubAccessService } from './club-access.service';
 import { ClubManagementService } from './club-management.service';
@@ -168,6 +169,9 @@ export class ClubManagementController {
     @Body() dto: CreatePriceRuleDto,
   ) {
     return this.management.addPrice(user.id, dto);
+  }
+  @Patch('pricing/:id') updatePrice(@CurrentUser() user: AuthenticatedUser, @Param('id') id: string, @Body() dto: UpdatePriceRuleDto) {
+    return this.management.updatePrice(user.id, id, dto);
   }
   @Get('blocks') blocks(@CurrentUser() user: AuthenticatedUser) {
     return this.management.blocks(user.id);

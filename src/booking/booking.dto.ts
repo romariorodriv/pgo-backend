@@ -1,6 +1,8 @@
 import { Type } from 'class-transformer';
 import {
   IsArray,
+  ArrayMinSize,
+  ArrayMaxSize,
   IsBoolean,
   IsEmail,
   IsEnum,
@@ -14,6 +16,7 @@ import {
   Min,
   MinLength,
   ValidateNested,
+  ValidateIf,
 } from 'class-validator';
 import { ClubStatus, CourtBlockReason, CourtStatus } from '@prisma/client';
 
@@ -58,8 +61,8 @@ export class SetSchedulesDto {
   @IsArray()
   @ValidateNested({ each: true })
   @Type(() => ScheduleItemDto)
-  schedules: ScheduleItemDto[];
-  @IsArray() @IsInt({ each: true }) durations: number[];
+  @ArrayMaxSize(700) schedules: ScheduleItemDto[];
+  @IsArray() @ArrayMinSize(1) @ArrayMaxSize(20) @IsInt({ each: true }) @Min(30, {each:true}) @Max(240, {each:true}) durations: number[];
 }
 
 export class CreatePriceRuleDto {
@@ -69,6 +72,16 @@ export class CreatePriceRuleDto {
   @Matches(/^([01]\d|2[0-3]):[0-5]\d$/) endTime: string;
   @IsInt() @Min(30) @Max(240) durationMinutes: number;
   @IsNumber() @Min(0.01) price: number;
+}
+
+export class UpdatePriceRuleDto {
+  @IsOptional() @IsString() courtId?: string | null;
+  @ValidateIf((_object, value) => value !== undefined) @IsInt() @Min(0) @Max(6) dayOfWeek?: number;
+  @ValidateIf((_object, value) => value !== undefined) @Matches(/^([01]\d|2[0-3]):[0-5]\d$/) startTime?: string;
+  @ValidateIf((_object, value) => value !== undefined) @Matches(/^([01]\d|2[0-3]):[0-5]\d$/) endTime?: string;
+  @ValidateIf((_object, value) => value !== undefined) @IsInt() @Min(30) @Max(240) durationMinutes?: number;
+  @ValidateIf((_object, value) => value !== undefined) @IsNumber() @Min(0.01) price?: number;
+  @ValidateIf((_object, value) => value !== undefined) @IsBoolean() active?: boolean;
 }
 
 export class CreateCourtBlockDto {

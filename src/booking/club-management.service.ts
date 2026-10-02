@@ -1,10 +1,11 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
+import { ClubRole, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { ClubAccessService } from './club-access.service';
 import {
@@ -12,6 +13,7 @@ import {
   CreateCourtDto,
   CreatePriceRuleDto,
   SetSchedulesDto,
+  UpdatePriceRuleDto,
 } from './booking.dto';
 
 @Injectable()
@@ -21,7 +23,20 @@ export class ClubManagementService {
     private readonly access: ClubAccessService,
   ) {}
   async context(userId: string) {
-    return (await this.access.membership(userId)).club;
+    const member = await this.access.membership(userId);
+    return { ...member.club, membershipRole: member.role };
+  }
+  private async editableClub(userId: string) {
+    const member = await this.access.membership(userId);
+    if (member.role !== ClubRole.OWNER && member.role !== ClubRole.ADMIN) throw new ForbiddenException('Solo el propietario o administrador puede editar la configuración');
+    if (member.club.status !== 'APPROVED') throw new ForbiddenException('El club debe estar aprobado para editar su configuración');
+    return member.club;
+  }
+  private async editableCourt(userId: string, id: string) {
+    const court = await this.access.court(userId, id);
+    const member = await this.access.membership(userId, court.clubId, [ClubRole.OWNER, ClubRole.ADMIN]);
+    if (member.club.status !== 'APPROVED') throw new ForbiddenException('El club debe estar aprobado para editar su configuración');
+    return court;
   }
   async dashboard(userId: string) {
     const club = await this.context(userId);
@@ -76,11 +91,11 @@ export class ClubManagementService {
     });
   }
   async createCourt(userId: string, dto: CreateCourtDto) {
-    const club = await this.context(userId);
+    const club = await this.editableClub(userId);
     return this.prisma.court.create({ data: { ...dto, clubId: club.id } });
   }
   async updateCourt(userId: string, id: string, dto: Partial<CreateCourtDto>) {
-    await this.access.court(userId, id);
+    await this.editableCourt(userId, id);
     return this.prisma.court.update({ where: { id }, data: dto });
   }
   async schedules(userId: string) {
@@ -92,7 +107,14 @@ export class ClubManagementService {
     return { schedules, durations };
   }
   async setSchedules(userId: string, dto: SetSchedulesDto) {
-    const club = await this.context(userId);
+    const club = await this.editableClub(userId);
+    if (!dto.durations.length || dto.durations.some(value => !Number.isInteger(value) || value < 30 || value > 240)) throw new BadRequestException('Las duraciones deben estar entre 30 y 240 minutos');
+    const keys = new Set<string>();
+    for (const item of dto.schedules) {
+      const key = `${item.courtId ?? 'general'}:${item.dayOfWeek}`;
+      if (keys.has(key)) throw new BadRequestException('Solo puede existir un horario por cancha y día');
+      keys.add(key);
+    }
     for (const item of dto.schedules) {
       if (item.openTime >= item.closeTime)
         throw new BadRequestException({
@@ -111,6 +133,7 @@ export class ClubManagementService {
         });
     }
     return this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${club.id}))::text`;
       await tx.schedule.deleteMany({ where: { clubId: club.id } });
       await tx.schedule.createMany({
         data: dto.schedules.map((item) => ({
@@ -137,7 +160,7 @@ export class ClubManagementService {
     });
   }
   async addPrice(userId: string, dto: CreatePriceRuleDto) {
-    const club = await this.context(userId);
+    const club = await this.editableClub(userId);
     if (dto.startTime >= dto.endTime)
       throw new BadRequestException({
         code: 'INVALID_PRICE_RANGE',
@@ -153,13 +176,31 @@ export class ClubManagementService {
         code: 'FOREIGN_COURT',
         message: 'Cancha ajena',
       });
-    return this.prisma.priceRule.create({
-      data: {
-        ...dto,
-        price: new Prisma.Decimal(dto.price),
-        clubId: club.id,
-        courtId: dto.courtId ?? null,
-      },
+    return this.prisma.$transaction(async tx => {
+      await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${club.id}))::text`;
+      await this.validatePrice(tx, club.id, { ...dto, courtId: dto.courtId ?? null, active: true });
+      return tx.priceRule.create({ data: { ...dto, price: new Prisma.Decimal(dto.price), clubId: club.id, courtId: dto.courtId ?? null } });
+    });
+  }
+  private async validatePrice(tx: Prisma.TransactionClient, clubId: string, rule: {courtId: string | null; dayOfWeek: number; startTime: string; endTime: string; durationMinutes: number; active: boolean}, id?: string) {
+    if (rule.startTime >= rule.endTime) throw new BadRequestException('El fin de la tarifa debe ser posterior al inicio');
+    const duration = await tx.allowedDuration.findFirst({ where: { clubId, minutes: rule.durationMinutes, active: true } });
+    if (rule.active && !duration) throw new BadRequestException('La duración no está configurada en los horarios del club');
+    const span = (v: string) => Number(v.slice(0, 2)) * 60 + Number(v.slice(3));
+    if (rule.active && span(rule.endTime) - span(rule.startTime) < rule.durationMinutes) throw new BadRequestException('El rango de la tarifa debe cubrir al menos una reserva');
+    if (rule.active && await tx.priceRule.findFirst({ where: { clubId, courtId: rule.courtId, dayOfWeek: rule.dayOfWeek, durationMinutes: rule.durationMinutes, active: true, ...(id ? {id: {not: id}} : {}), startTime: {lt: rule.endTime}, endTime: {gt: rule.startTime} } })) throw new ConflictException('La tarifa se superpone con otra tarifa activa para esa cancha, día y duración');
+  }
+  async updatePrice(userId: string, id: string, dto: UpdatePriceRuleDto) {
+    const current = await this.prisma.priceRule.findUnique({where: {id}});
+    if (!current) throw new NotFoundException('Tarifa no encontrada');
+    const member = await this.access.membership(userId, current.clubId, [ClubRole.OWNER, ClubRole.ADMIN]);
+    if (member.club.status !== 'APPROVED') throw new ForbiddenException('El club debe estar aprobado para editar tarifas');
+    const rule = { ...current, ...dto, courtId: dto.courtId === undefined ? current.courtId : dto.courtId };
+    if (rule.courtId && !await this.prisma.court.findFirst({where: {id: rule.courtId, clubId: current.clubId}})) throw new BadRequestException('Cancha ajena');
+    return this.prisma.$transaction(async tx => {
+      await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${current.clubId}))::text`;
+      await this.validatePrice(tx, current.clubId, rule, id);
+      return tx.priceRule.update({ where: {id}, data: { ...dto, ...(dto.price !== undefined ? { price: new Prisma.Decimal(dto.price) } : {}) } });
     });
   }
   async blocks(userId: string) {
@@ -171,11 +212,13 @@ export class ClubManagementService {
   }
   async addBlock(userId: string, dto: CreateCourtBlockDto) {
     const court = await this.access.court(userId, dto.courtId);
+    const member = await this.access.membership(userId, court.clubId);
+    if (member.club.status !== 'APPROVED') throw new ForbiddenException('El club debe estar aprobado para crear bloqueos');
     const startAt = new Date(
       dto.startAt ?? `${dto.date}T${dto.start}:00-05:00`,
     );
     const endAt = new Date(dto.endAt ?? `${dto.date}T${dto.end}:00-05:00`);
-    if (!(startAt < endAt))
+    if (!Number.isFinite(startAt.getTime()) || !Number.isFinite(endAt.getTime()) || !(startAt < endAt))
       throw new BadRequestException({
         code: 'INVALID_BLOCK_RANGE',
         message: 'Rango inválido',
