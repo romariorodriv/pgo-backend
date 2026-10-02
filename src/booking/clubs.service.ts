@@ -3,7 +3,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { ClubRole, ClubStatus, Prisma } from '@prisma/client';
+import { ClubRole, ClubStatus, CourtStatus, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { RegisterClubDto } from './booking.dto';
 
@@ -26,6 +26,11 @@ export class ClubsService {
           : {}),
       },
       include: {
+        courts: {
+          where: { active: true, status: { not: CourtStatus.INACTIVE } },
+          select: { id: true, name: true, indoor: true, surface: true, status: true },
+          orderBy: { name: 'asc' },
+        },
         allowedDurations: {
           where: { active: true },
           select: { minutes: true },
