@@ -18,15 +18,21 @@ const addDays = (date: string, amount: number) => {
   return value.toISOString().slice(0, 10);
 };
 
+const validDate = (value: string) => {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const parsed = new Date(`${value}T12:00:00Z`);
+  return Number.isFinite(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+};
+
 @Injectable()
 export class AvailabilityService {
   constructor(private readonly prisma: PrismaService) {}
 
   async range(clubId: string, from: string, to: string, duration: number) {
     if (
-      !/^\d{4}-\d{2}-\d{2}$/.test(from) ||
-      !/^\d{4}-\d{2}-\d{2}$/.test(to) ||
-      !Number.isInteger(duration)
+      !validDate(from) ||
+      !validDate(to) ||
+      !Number.isInteger(duration) || duration < 30 || duration > 240
     )
       throw new BadRequestException({
         code: 'INVALID_AVAILABILITY_QUERY',

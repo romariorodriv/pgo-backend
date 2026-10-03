@@ -132,6 +132,14 @@ export class ReservationsService {
               code: 'PRICE_NOT_CONFIGURED',
               message: 'No existe precio para el horario',
             });
+          if (
+            dto.expectedPrice !== undefined &&
+            Math.round(Number(dto.expectedPrice) * 100) !== Math.round(Number(priceRule.price) * 100)
+          )
+            throw new ConflictException({
+              code: 'PRICE_CHANGED',
+              message: 'La tarifa cambió. Vuelve a seleccionar el turno para revisar el precio actualizado.',
+            });
           const [blocked, occupied] = await Promise.all([
             tx.courtBlock.count({
               where: {

@@ -99,6 +99,7 @@ export class CreateReservationDto {
   @IsString() courtId: string;
   @IsISO8601() startAt: string;
   @IsInt() @Min(30) @Max(240) durationMinutes: number;
+  @IsOptional() @IsNumber({ maxDecimalPlaces: 2 }) @Min(0.01) @Max(99999) expectedPrice?: number;
   @IsOptional() @IsEmail() playerEmail?: string;
   @IsOptional() @IsString() @MinLength(2) guestName?: string;
   @IsOptional() @IsString() @MinLength(5) guestPhone?: string;
