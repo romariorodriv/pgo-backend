@@ -8,6 +8,7 @@ import { AuthController } from './auth.controller';
 import { EmailService } from './email.service';
 import { AuthService } from './auth.service';
 import { JwtStrategy } from './strategies/jwt.strategy';
+import { WebAuthController } from './web-auth.controller';
 
 @Module({
   imports: [
@@ -16,8 +17,13 @@ import { JwtStrategy } from './strategies/jwt.strategy';
     JwtModule.registerAsync({
       inject: [ConfigService],
       useFactory: (configService: ConfigService) => {
-        const expiresIn = (configService.get<string>('JWT_EXPIRES_IN') ??
-          '30d') as StringValue;
+        const configuredExpiration =
+          configService.get<string>('JWT_EXPIRES_IN') ?? '30d';
+        const expiresIn: number | StringValue = /^\d+$/.test(
+          configuredExpiration,
+        )
+          ? Number(configuredExpiration)
+          : (configuredExpiration as StringValue);
 
         return {
           secret: configService.getOrThrow<string>('JWT_SECRET'),
@@ -26,7 +32,7 @@ import { JwtStrategy } from './strategies/jwt.strategy';
       },
     }),
   ],
-  controllers: [AuthController],
+  controllers: [AuthController, WebAuthController],
   providers: [AuthService, JwtStrategy, EmailService],
 })
 export class AuthModule {}

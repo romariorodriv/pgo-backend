@@ -8,9 +8,13 @@ import { ConfigService } from '@nestjs/config';
 import { Prisma } from '@prisma/client';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
+import type { App } from 'firebase-admin/app';
+import type { DecodedIdToken } from 'firebase-admin/auth';
 import { OAuth2Client } from 'google-auth-library';
 import { createHash, randomBytes, randomUUID } from 'crypto';
+import { readFileSync } from 'fs';
 import { EmailService } from './email.service';
+import { AppleLoginDto } from './dto/apple-login.dto';
 import { GoogleLoginDto } from './dto/google-login.dto';
 import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
@@ -25,8 +29,10 @@ export class AuthService {
     'Si el correo esta registrado, recibiras instrucciones para restablecer tu contrasena.';
   private static readonly passwordResetTtlMs = 30 * 60 * 1000;
   private static readonly refreshTtlMs = 30 * 24 * 60 * 60 * 1000;
+  private static readonly appleProvider = 'apple.com';
   private readonly googleClient = new OAuth2Client();
   private readonly googleClientIds: string[];
+  private firebaseApp?: App;
 
   constructor(
     private readonly usersService: UsersService,
@@ -177,7 +183,7 @@ export class AuthService {
 
         try {
           user = await this.usersService.create({
-            name: (payload.name ?? normalizedEmail.split('@').first).trim(),
+            name: (payload.name ?? normalizedEmail.split('@')[0]).trim(),
             email: normalizedEmail,
             googleId: payload.sub,
             passwordHash,
@@ -212,9 +218,219 @@ export class AuthService {
     };
   }
 
+  async appleLogin(authorization?: string, _appleLoginDto?: AppleLoginDto) {
+    const idToken = this.extractBearerToken(authorization);
+
+    if (!idToken) {
+      throw new UnauthorizedException('No se pudo validar la cuenta de Apple');
+    }
+
+    console.info('auth_apple received token=yes');
+
+    let decodedToken: DecodedIdToken;
+
+    try {
+      decodedToken = await this.verifyFirebaseIdToken(idToken);
+    } catch {
+      console.info('auth_apple verify_failed');
+      throw new UnauthorizedException('No se pudo validar la cuenta de Apple');
+    }
+
+    console.info(
+      `auth_apple verify_ok uid_present=${Boolean(decodedToken.uid)} provider=${this.safeProvider(decodedToken.firebase?.sign_in_provider)} email_domain=${this.emailDomain(decodedToken.email)}`,
+    );
+
+    const provider = decodedToken.firebase?.sign_in_provider;
+
+    if (!decodedToken.uid || provider !== AuthService.appleProvider) {
+      throw new UnauthorizedException('No se pudo validar la cuenta de Apple');
+    }
+
+    const tokenEmail =
+      typeof decodedToken.email === 'string' &&
+      decodedToken.email_verified === true
+        ? decodedToken.email.toLowerCase().trim()
+        : null;
+    const displayName =
+      typeof decodedToken.name === 'string' && decodedToken.name.trim()
+        ? decodedToken.name.trim()
+        : null;
+
+    let user;
+
+    try {
+      user = await this.prisma.$transaction(async (tx) => {
+        const identity = await tx.authIdentity.findFirst({
+          where: {
+            OR: [
+              { firebaseUid: decodedToken.uid },
+              {
+                provider: AuthService.appleProvider,
+                providerUserId: decodedToken.uid,
+              },
+            ],
+          },
+          include: { user: true },
+        });
+
+        if (identity) {
+          if (!identity.user.isActive) {
+            throw new UnauthorizedException(
+              'No se pudo validar la cuenta de Apple',
+            );
+          }
+
+          if (tokenEmail && !identity.email) {
+            await tx.authIdentity.update({
+              where: { id: identity.id },
+              data: { email: tokenEmail },
+            });
+          }
+
+          return identity.user;
+        }
+
+        if (tokenEmail) {
+          const existingByEmail = await tx.user.findUnique({
+            where: { email: tokenEmail },
+          });
+
+          if (existingByEmail) {
+            throw new BadRequestException(
+              'Ya existe una cuenta con ese correo. Inicia sesion con tu metodo anterior y vincula Apple desde tu perfil.',
+            );
+          }
+        }
+
+        const email = tokenEmail ?? `apple-${decodedToken.uid}@pgo.local`;
+        const passwordHash = await bcrypt.hash(randomUUID(), 10);
+
+        return tx.user.create({
+          data: {
+            name: displayName ?? this.nameFromEmail(email),
+            email,
+            passwordHash,
+            profile: {
+              create: {},
+            },
+            authIdentities: {
+              create: {
+                provider: AuthService.appleProvider,
+                providerUserId: decodedToken.uid,
+                firebaseUid: decodedToken.uid,
+                email: tokenEmail,
+              },
+            },
+          },
+        });
+      });
+    } catch (error) {
+      if (error instanceof BadRequestException) {
+        throw error;
+      }
+
+      if (error instanceof UnauthorizedException) {
+        throw error;
+      }
+
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2002'
+      ) {
+        user = await this.prisma.authIdentity
+          .findFirst({
+            where: {
+              OR: [
+                { firebaseUid: decodedToken.uid },
+                {
+                  provider: AuthService.appleProvider,
+                  providerUserId: decodedToken.uid,
+                },
+              ],
+            },
+            include: { user: true },
+          })
+          .then((identity) => identity?.user);
+
+        if (!user) {
+          throw new BadRequestException(
+            'No se pudo completar el login con Apple',
+          );
+        }
+      } else {
+        throw error;
+      }
+    }
+
+    const tokens = await this.buildTokens(user.id, user.email);
+    console.info('auth_apple jwt_issued');
+
+    return {
+      message: 'Login con Apple exitoso',
+      user: this.sanitizeUser(user),
+      ...tokens,
+    };
+  }
+
   private emailDomain(email?: string) {
     const separator = email?.lastIndexOf('@') ?? -1;
     return separator >= 0 ? email!.slice(separator + 1) : 'unknown';
+  }
+
+  private extractBearerToken(authorization?: string) {
+    const match = authorization?.match(/^Bearer\s+(.+)$/i);
+    return match?.[1]?.trim();
+  }
+
+  private safeProvider(provider?: string) {
+    return provider?.replace(/[^a-zA-Z0-9_.-]/g, '_') ?? 'unknown';
+  }
+
+  private nameFromEmail(email: string) {
+    const localPart = email.split('@')[0]?.trim();
+    return localPart ? localPart : 'Usuario PGO';
+  }
+
+  async verifyFirebaseIdToken(idToken: string) {
+    const { getAuth } = await import('firebase-admin/auth');
+    return getAuth(await this.getFirebaseApp()).verifyIdToken(idToken, true);
+  }
+
+  private async getFirebaseApp() {
+    if (this.firebaseApp) {
+      return this.firebaseApp;
+    }
+
+    const { cert, getApps, initializeApp } = await import('firebase-admin/app');
+    const existingApp = getApps()[0];
+    if (existingApp) {
+      this.firebaseApp = existingApp;
+      return existingApp;
+    }
+
+    const serviceAccountJson = this.configService.get<string>(
+      'FIREBASE_SERVICE_ACCOUNT_JSON',
+    );
+    const serviceAccountPath = this.configService.get<string>(
+      'FIREBASE_SERVICE_ACCOUNT_PATH',
+    );
+    const credentialSource = serviceAccountJson
+      ? JSON.parse(serviceAccountJson)
+      : serviceAccountPath
+        ? JSON.parse(readFileSync(serviceAccountPath, 'utf8'))
+        : null;
+
+    if (!credentialSource) {
+      throw new InternalServerErrorException(
+        'Apple Sign-In no esta configurado en el backend',
+      );
+    }
+
+    this.firebaseApp = initializeApp({
+      credential: cert(credentialSource),
+    });
+
+    return this.firebaseApp;
   }
 
   async forgotPassword(email: string) {
@@ -372,6 +588,7 @@ export class AuthService {
       this.prisma.pushDeviceToken.deleteMany({ where: { userId } }),
       this.prisma.refreshToken.deleteMany({ where: { userId } }),
       this.prisma.passwordResetToken.deleteMany({ where: { userId } }),
+      this.prisma.authIdentity.deleteMany({ where: { userId } }),
       this.prisma.appNotification.deleteMany({ where: { userId } }),
       this.prisma.profile.updateMany({
         where: { userId },

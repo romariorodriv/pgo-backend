@@ -10,6 +10,7 @@ import {
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
+import { CreateOpenMatchChatMessageDto } from './dto/create-open-match-chat-message.dto';
 import { CreateOpenMatchAlertDto } from './dto/create-open-match-alert.dto';
 import { UpdateOpenMatchCoordinationDto } from './dto/update-open-match-coordination.dto';
 import { OpenMatchAlertsService } from './open-match-alerts.service';
@@ -75,5 +76,22 @@ export class OpenMatchAlertsController {
     @CurrentUser() user: AuthenticatedUser,
   ) {
     return this.alertsService.updateCoordination(id, user.id, body.status);
+  }
+
+  @Get(':id/chat')
+  getChatMessages(
+    @Param('id') id: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.alertsService.getChatMessages(id, user.id);
+  }
+
+  @Post(':id/chat')
+  createChatMessage(
+    @Param('id') id: string,
+    @Body() body: CreateOpenMatchChatMessageDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.alertsService.createChatMessage(id, user.id, body.message);
   }
 }

@@ -143,3 +143,46 @@ describe('ProfileService updateMyProfile', () => {
     });
   });
 });
+
+describe('ProfileService uploadMyProfilePhoto', () => {
+  it('stores a data URL fallback when Firebase Storage is unavailable', async () => {
+    const prisma = {
+      user: {
+        findUnique: jest.fn().mockResolvedValue({ id: 'user-1' }),
+      },
+      profile: {
+        upsert: jest.fn(),
+      },
+    };
+    const service = new ProfileService(prisma as never);
+    const profileResponse = {
+      id: 'user-1',
+      photoUrl: 'data:image/png;base64,test',
+    };
+    jest
+      .spyOn(service, 'getMyProfile')
+      .mockResolvedValue(profileResponse as never);
+    jest
+      .spyOn(service as any, 'getFirebaseStorageBucket')
+      .mockImplementation(() => {
+        throw new Error('Firebase storage bucket is not configured');
+      });
+
+    const dataUrl = `data:image/png;base64,${Buffer.alloc(2048).toString('base64')}`;
+
+    await expect(
+      service.uploadMyProfilePhoto('user-1', { dataUrl }, 'request-photo'),
+    ).resolves.toBe(profileResponse);
+
+    expect(prisma.profile.upsert).toHaveBeenCalledWith({
+      where: { userId: 'user-1' },
+      create: {
+        userId: 'user-1',
+        photoUrl: dataUrl,
+      },
+      update: {
+        photoUrl: dataUrl,
+      },
+    });
+  });
+});

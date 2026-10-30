@@ -8,9 +8,11 @@ describe('OpenMatchShareController', () => {
   function responseMock() {
     const response = {
       status: jest.fn(),
+      setHeader: jest.fn(),
       type: jest.fn(),
       send: jest.fn(),
     };
+    response.setHeader.mockReturnValue(response);
     response.status.mockReturnValue(response);
     response.type.mockReturnValue(response);
     response.send.mockReturnValue(response);
@@ -79,7 +81,7 @@ describe('OpenMatchShareController', () => {
     expect(response.send.mock.calls[0][0]).toContain('Partido no disponible');
   });
 
-  it('uses an Android intent without a broken store link', async () => {
+  it('uses an Android intent with Play Store fallback', async () => {
     delete process.env.PGO_ANDROID_STORE_URL;
     const service = {
       findPublicPreview: jest.fn().mockResolvedValue(null),
@@ -93,10 +95,15 @@ describe('OpenMatchShareController', () => {
     );
 
     const html = response.send.mock.calls[0][0] as string;
-    expect(html).toContain('intent://pgoapp.com/partidos/');
+    expect(html).toContain('intent://partidos/');
     expect(html).toContain('Abrir en PGO');
-    expect(html).toContain('Próximamente en tiendas');
-    expect(html).not.toContain('play.google.com');
+    expect(html).toContain('window.location.href = appUrl');
+    expect(html).toContain(
+      'https%3A%2F%2Fplay.google.com%2Fstore%2Fapps%2Fdetails%3Fid%3Dcom.pgo.app',
+    );
+    expect(html).toContain(
+      'https://play.google.com/store/apps/details?id=com.pgo.app',
+    );
   });
 
   it('uses the universal link and configured iOS store URL', async () => {
@@ -113,7 +120,8 @@ describe('OpenMatchShareController', () => {
     );
 
     const html = response.send.mock.calls[0][0] as string;
-    expect(html).toContain(`https://pgoapp.com/partidos/${existingId}`);
+    expect(html).toContain(`https://api.pgoapp.com/partidos/${existingId}`);
+    expect(html).toContain(`pgo://partidos/${existingId}`);
     expect(html).toContain('https://example.test/testflight');
     expect(html).not.toContain('intent://');
   });
