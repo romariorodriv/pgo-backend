@@ -19,6 +19,10 @@ export class OpenMatchShareController {
       ? await this.alertsService.findPublicPreview(id)
       : null;
 
+    response.setHeader(
+      'Content-Security-Policy',
+      "default-src 'self'; base-uri 'self'; object-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; upgrade-insecure-requests",
+    );
     response
       .status(200)
       .type('html')
@@ -30,15 +34,16 @@ export class OpenMatchShareController {
     match: PublicOpenMatchPreviewDto | null,
     userAgent: string,
   ): string {
-    const publicUrl = `https://pgoapp.com/partidos/${encodeURIComponent(id)}`;
+    const publicUrl = `https://api.pgoapp.com/partidos/${encodeURIComponent(id)}`;
     const isAndroid = /android/i.test(userAgent);
     const isIos = /iphone|ipad|ipod/i.test(userAgent);
-    const storeUrl = (
-      isIos ? process.env.PGO_IOS_STORE_URL : process.env.PGO_ANDROID_STORE_URL
-    )?.trim();
+    const storeUrl = this.storeUrlForPlatform(isIos, isAndroid);
+    const deepLinkUrl = this.buildCustomSchemeUrl(id);
     const appUrl = isAndroid
-      ? this.buildAndroidIntentUrl(id, publicUrl)
-      : publicUrl;
+      ? this.buildAndroidIntentUrl(id, storeUrl ?? publicUrl)
+      : isIos
+        ? deepLinkUrl
+        : publicUrl;
 
     if (!match) {
       return this.document({
@@ -53,6 +58,9 @@ export class OpenMatchShareController {
             ${this.actions(appUrl, storeUrl, isIos)}
           </section>`,
         publicUrl,
+        appUrl,
+        storeUrl,
+        autoOpen: isAndroid || isIos,
       });
     }
 
@@ -75,6 +83,9 @@ export class OpenMatchShareController {
       title: 'Partido de pádel en PGO',
       description,
       publicUrl,
+      appUrl,
+      storeUrl,
+      autoOpen: isAndroid || isIos,
       body: `
         <section class="card">
           <span class="state ${state.className}">${state.label}</span>
@@ -96,10 +107,18 @@ export class OpenMatchShareController {
     description: string;
     body: string;
     publicUrl: string;
+    appUrl: string;
+    storeUrl?: string;
+    autoOpen: boolean;
   }): string {
     const title = this.escapeHtml(options.title);
     const description = this.escapeHtml(options.description);
     const publicUrl = this.escapeHtml(options.publicUrl);
+    const autoOpenScript = this.autoOpenScript(
+      options.appUrl,
+      options.storeUrl,
+      options.autoOpen,
+    );
     return `<!doctype html>
 <html lang="es">
 <head>
@@ -142,6 +161,7 @@ export class OpenMatchShareController {
     <div class="brand">PGO</div>
     ${options.body}
   </main>
+  ${autoOpenScript}
 </body>
 </html>`;
   }
@@ -178,13 +198,67 @@ export class OpenMatchShareController {
 
   private buildAndroidIntentUrl(id: string, fallbackUrl: string) {
     return [
-      `intent://pgoapp.com/partidos/${encodeURIComponent(id)}`,
+      `intent://partidos/${encodeURIComponent(id)}`,
       '#Intent',
-      'scheme=https',
+      'scheme=pgo',
       'package=com.pgo.app',
       `S.browser_fallback_url=${encodeURIComponent(fallbackUrl)}`,
       'end',
     ].join(';');
+  }
+
+  private buildCustomSchemeUrl(id: string) {
+    return `pgo://partidos/${encodeURIComponent(id)}`;
+  }
+
+  private autoOpenScript(
+    appUrl: string,
+    storeUrl: string | undefined,
+    autoOpen: boolean,
+  ) {
+    if (!autoOpen) return '';
+    const encodedAppUrl = JSON.stringify(appUrl);
+    const encodedStoreUrl = JSON.stringify(storeUrl ?? '');
+    return `<script>
+      (function () {
+        var appUrl = ${encodedAppUrl};
+        var storeUrl = ${encodedStoreUrl};
+        var openedAt = Date.now();
+        var didHide = false;
+
+        function markHidden() { didHide = true; }
+        document.addEventListener('visibilitychange', function () {
+          if (document.hidden) markHidden();
+        });
+        window.addEventListener('pagehide', markHidden);
+        window.location.href = appUrl;
+
+        if (storeUrl) {
+          window.setTimeout(function () {
+            if (!didHide && Date.now() - openedAt < 2600) {
+              window.location.href = storeUrl;
+            }
+          }, 1800);
+        }
+      })();
+    </script>`;
+  }
+
+  private storeUrlForPlatform(isIos: boolean, isAndroid: boolean) {
+    if (isIos) {
+      return process.env.PGO_IOS_STORE_URL?.trim() || undefined;
+    }
+    if (isAndroid) {
+      return (
+        process.env.PGO_ANDROID_STORE_URL?.trim() ||
+        'https://play.google.com/store/apps/details?id=com.pgo.app'
+      );
+    }
+    return (
+      process.env.PGO_ANDROID_STORE_URL?.trim() ||
+      process.env.PGO_IOS_STORE_URL?.trim() ||
+      undefined
+    );
   }
 
   private isUuid(value: string) {

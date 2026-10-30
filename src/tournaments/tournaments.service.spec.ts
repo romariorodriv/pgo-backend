@@ -1,5 +1,10 @@
 import { BadRequestException } from '@nestjs/common';
-import { TournamentMatchStatus, TournamentStatus } from '@prisma/client';
+import {
+  TournamentMatchStatus,
+  TournamentRegistrationMode,
+  TournamentRegistrationStatus,
+  TournamentStatus,
+} from '@prisma/client';
 import { TournamentsService } from './tournaments.service';
 
 describe('TournamentsService MVP guards', () => {
@@ -11,6 +16,7 @@ describe('TournamentsService MVP guards', () => {
     prisma = {
       tournament: {
         findMany: jest.fn(),
+        findFirst: jest.fn(),
         findUnique: jest.fn(),
         update: jest.fn(),
       },
@@ -48,7 +54,7 @@ describe('TournamentsService MVP guards', () => {
     ).rejects.toThrow('El torneo ya no tiene cupos disponibles');
   });
 
-  it('excludes expired tournaments from the public list', async () => {
+  it('excludes expired, canceled and completed tournaments from the public list', async () => {
     prisma.tournament.findMany.mockResolvedValue([]);
 
     await expect(service.findAll()).resolves.toEqual([]);
@@ -77,6 +83,94 @@ describe('TournamentsService MVP guards', () => {
     await expect(
       service.registerSolo('t1', 'u1', 'Drive', 'Flexible'),
     ).rejects.toThrow('La fecha del torneo ya pasó');
+  });
+
+  it('loads alerts only for confirmed tournament registrations', async () => {
+    prisma.tournament.findMany.mockResolvedValue([]);
+
+    await expect(service.getMyAlerts('user-1')).resolves.toEqual({
+      alerts: [],
+    });
+
+    expect(prisma.tournament.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          registrations: {
+            some: {
+              OR: [{ userId: 'user-1' }, { partnerUserId: 'user-1' }],
+              status: TournamentRegistrationStatus.CONFIRMED,
+            },
+          },
+        }),
+        include: expect.objectContaining({
+          registrations: expect.objectContaining({
+            where: {
+              status: TournamentRegistrationStatus.CONFIRMED,
+            },
+          }),
+        }),
+      }),
+    );
+  });
+
+  it('does not build finished tournament alert for users without involved matches', () => {
+    const alert = (service as any).buildTournamentAlert(
+      {
+        id: 't1',
+        title: 'Torneo',
+        category: '6TA',
+        location: 'Club',
+        startsAt: new Date('2026-07-11T10:00:00Z'),
+        status: TournamentStatus.COMPLETED,
+        updatedAt: new Date('2026-07-11T12:00:00Z'),
+        registrations: [
+          {
+            userId: 'user-1',
+            partnerUserId: 'user-2',
+            mode: TournamentRegistrationMode.WITH_PARTNER,
+            status: TournamentRegistrationStatus.CONFIRMED,
+            user: { id: 'user-1', name: 'Jugador Uno' },
+            partnerUser: { id: 'user-2', name: 'Jugador Dos' },
+          },
+        ],
+        matches: [
+          {
+            id: 'm1',
+            stage: 'final',
+            matchNumber: 1,
+            courtLabel: 'Cancha 1',
+            scheduledAt: new Date('2026-07-11T10:00:00Z'),
+            startedAt: null,
+            teamOneLabel: 'Otra dupla / Rival',
+            teamTwoLabel: 'Campeon / Subcampeon',
+            winnerLabel: 'Campeon / Subcampeon',
+            status: TournamentMatchStatus.FINISHED,
+            score: '6-4',
+            createdAt: new Date('2026-07-11T09:00:00Z'),
+            updatedAt: new Date('2026-07-11T12:00:00Z'),
+          },
+        ],
+      },
+      'user-1',
+    );
+
+    expect(alert).toBeNull();
+  });
+
+  it('does not expose canceled tournaments through public detail lookup', async () => {
+    prisma.tournament.findFirst.mockResolvedValue(null);
+
+    await expect(service.findOne('t1')).rejects.toThrow('Torneo no encontrado');
+    expect(prisma.tournament.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          OR: [{ id: 't1' }, { slug: 't1' }],
+          status: {
+            not: TournamentStatus.CANCELED,
+          },
+        },
+      }),
+    );
   });
 
   it('rejects registration when tournament is completed', async () => {
